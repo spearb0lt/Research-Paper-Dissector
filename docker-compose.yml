@@ -1,0 +1,50 @@
+# Everything on one machine, with the data kept in a named volume so uploads
+# survive a rebuild.
+#
+#   docker compose up --build
+#
+# Put your provider keys in .env beside this file. With none set the app still
+# parses, browses and searches papers; it simply will not write answers.
+
+services:
+  app:
+    build: .
+    ports:
+      # Published on 8099, not 8000. The container is free to listen on 8000
+      # internally; what matters is not taking a port another project on the
+      # host already uses.
+      - "8099:8000"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      # Postgres is optional. Commented out, the app uses SQLite on the volume,
+      # which is entirely adequate for one person's library.
+      # DATABASE_URL: postgresql://dissect:dissect@db:5432/dissect
+    volumes:
+      - dissect-data:/data
+      # The model cache, so a rebuild does not re-download Docling's weights.
+      - dissect-models:/root/.cache
+    restart: unless-stopped
+    # Docling's layout models need real memory. Below about 2 GB the deep
+    # parser is killed mid page rather than reporting a useful error.
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+
+  # Uncomment, and set DATABASE_URL above, to use Postgres instead of SQLite.
+  # db:
+  #   image: postgres:17-alpine
+  #   environment:
+  #     POSTGRES_USER: dissect
+  #     POSTGRES_PASSWORD: dissect
+  #     POSTGRES_DB: dissect
+  #   volumes:
+  #     - dissect-db:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+volumes:
+  dissect-data:
+  dissect-models:
+  # dissect-db:

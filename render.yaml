@@ -1,0 +1,77 @@
+# Render blueprint, and a reasonable reference for any other container host
+# including an Oracle Always Free VM, because the build and start commands are
+# the same anywhere.
+#
+# Two things to know before relying on the free tier:
+#
+#   * A free web service has 512 MB of RAM and 0.1 CPU. That is enough for the
+#     fast parser, BM25 and the bundled ONNX encoder, and is not enough for
+#     Docling's layout models. Deep parsing reports itself unavailable there,
+#     with the reason shown in the UI, rather than dying with an OOM.
+#   * A free instance spins down after 15 minutes without traffic and takes
+#     about a minute to wake, so the first request after a quiet night is slow.
+#
+# For the deep tier, use the `standard` plan, which has 2 GB, and uncomment the
+# server extras in the build command. An Oracle Always Free ARM instance has
+# 24 GB and runs everything, for nothing.
+
+services:
+  - type: web
+    name: dissect
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: |
+      pip install -r requirements.txt
+      python scripts/fetch_model.py --quiet
+      npm ci --no-audit --no-fund
+      npm run build
+    startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 65
+    healthCheckPath: /api/health
+    disk:
+      # Uploaded PDFs and extracted figures. Without a disk these live in /tmp
+      # and are gone on every restart, and the app says so in the header rather
+      # than losing them silently.
+      name: dissect-data
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR
+        value: /var/data
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dissect-db
+          property: connectionString
+      - key: PUBLIC_BASE_URL
+        sync: false
+      # Every provider key is deliberately left unset. Set the ones you have in
+      # the Render dashboard rather than committing them to this blueprint. With
+      # none set the app still parses, browses and searches papers.
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      # Set this to require a password on a public instance.
+      - key: APP_PASSWORD
+        sync: false
+
+databases:
+  - name: dissect-db
+    plan: free
+    region: oregon
+    # A free Render database expires 30 days after it is created, with a 14 day
+    # grace period. For anything you intend to keep, point DATABASE_URL at Neon
+    # or Supabase instead, whose free tiers do not expire.
+    postgresMajorVersion: "17"
