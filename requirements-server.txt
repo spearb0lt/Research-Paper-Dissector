@@ -1,0 +1,37 @@
+# Extras for a deployment that controls its own machine: local Docker, an
+# Oracle Always Free VM, a paid Render container, or a laptop. None of this
+# fits in a serverless bundle, and nothing here is required.
+#
+# Each package switches on one capability that server/runtime.py otherwise
+# reports as unavailable, with the reason shown in the UI rather than failing
+# at call time. Install the CPU build of torch explicitly first, because the
+# default PyPI wheel pulls several hundred megabytes of CUDA libraries that are
+# useless on a CPU host:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-server.txt
+
+-r requirements.txt
+
+# Deep PDF parsing: the layout model, TableFormer, and figure extraction.
+# Roughly 500 MB of model weights are downloaded on first use.
+docling>=2.129.0
+docling-core>=2.97.0
+docling-parse>=7.20.0
+docling-ibm-models>=4.0.0
+
+# Cross encoder reranking, and the full PyTorch sentence encoder.
+sentence-transformers>=3.3.0
+
+# CLIP, for visual search over figures.
+open-clip-torch>=2.24.0
+
+# OCR. RapidOCR runs on onnxruntime and needs no system binary, which is why it
+# is listed first and is the default. EasyOCR is more accurate on hard scans and
+# pulls in the whole torch stack. Tesseract needs a separate system install.
+rapidocr-onnxruntime>=1.3.24
+# easyocr>=1.7.0
+# pytesseract>=0.3.10
+
+# Table export from Docling's document model.
+pandas>=2.0.0

@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+*.tsbuildinfo
+
+# Data and secrets
+.env
+.env.local
+data/
+!data/.gitkeep
+
+# The bundled encoder is fetched by scripts/fetch_model.py rather than committed.
+Semantic Models/
+
+# The demo recording's intermediate. Only docs/media/demo.gif is embedded, and
+# `npm run capture` regenerates both.
+docs/media/demo.webm
+docs/media/_video/
+
+.DS_Store
