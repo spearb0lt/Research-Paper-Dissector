@@ -8,6 +8,14 @@ and semantic search, and the whole browsing surface are local and free. A model
 key adds written answers and the analysis lenses on top of that, and is never
 required.
 
+**[Try it: dissect-sepia.vercel.app](https://dissect-sepia.vercel.app)**
+
+The live instance runs the serverless tier, so the deep parser, OCR and
+reranking report themselves unavailable there and everything else works. It
+carries no model key: answers need one pasted in Settings, which is kept in
+your browser and sent only to the provider it belongs to. Papers you add are
+public to anyone who opens the link, and can be removed from the library again.
+
 ![Adding a paper, browsing what was extracted, and asking a question](docs/media/demo.gif)
 
 ---
@@ -351,6 +359,27 @@ halves running and at least one paper in the library.
 
 `server/runtime.py` detects the platform and decides what is possible. Adding a
 hosting target means teaching `detect()` about it, not editing the parser.
+
+### Storage, where there is no disk
+
+A serverless instance has its own empty `/tmp`, so PDFs, figure crops and
+cached page renders are written to the database instead and the filesystem is
+only a read cache in front of them. `GET /api/health` reports the total and
+whether it is in the database, which is the number to watch against a free
+Postgres quota.
+
+Storage is content addressed, so a blob belongs to no single paper and cannot
+be deleted with one. Removing a paper therefore sweeps afterwards for blobs
+that no surviving paper refers to, through the PDF digest, the per page render
+digests and every figure element, and the response says how much it freed. A
+re-parse or a failed ingest can also strand bytes, so the same sweep is
+available on its own:
+
+    python -m server.ops.cli gc
+
+Measured on the live instance: "Attention Is All You Need" costs 2.8 MB, and
+ColPali costs 31 MB because it has twenty figures and a large page count.
+Removing a paper returns all of it.
 
 ---
 
