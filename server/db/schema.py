@@ -212,6 +212,29 @@ TABLES: tuple[str, ...] = (
         created_at    {TS}   NOT NULL
     )
     """,
+    # ------------------------------------------------------------------ blobs
+    #
+    # Binary content, and only on a deployment that has nowhere else to put it.
+    #
+    # The filesystem is the store everywhere it survives a restart, because a
+    # PDF read straight off disk costs nothing and a row read costs a query. On
+    # a serverless tier there is no such filesystem: every instance gets its own
+    # empty /tmp, so a paper uploaded through one instance is invisible to the
+    # next and gone within minutes. Measured on Vercel: eight of twelve
+    # concurrent requests saw an uploaded paper and four saw an empty library.
+    #
+    # The database is the only storage those instances share, so that is where
+    # the bytes go. Rows are written only when runtime.persistent_disk is false,
+    # and the filesystem still serves every read as a cache in front of them.
+    """
+    CREATE TABLE IF NOT EXISTS blobs (
+        digest      {TEXT} NOT NULL PRIMARY KEY,
+        media_type  {TEXT} NOT NULL,
+        content     {BLOB},
+        size        {INT}  DEFAULT 0,
+        created_at  {TS}   NOT NULL
+    )
+    """,
 )
 
 # Columns added after the first release. `CREATE TABLE IF NOT EXISTS` does

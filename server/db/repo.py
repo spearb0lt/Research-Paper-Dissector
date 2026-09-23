@@ -772,3 +772,55 @@ def note_counts(paper_id: int) -> dict[int, int]:
         (paper_id,),
     )
     return {int(r["element_id"]): int(r["n"]) for r in rows}
+
+
+# ------------------------------------------------------------------- blobs
+#
+# Binary content, stored here only by a deployment that has no persistent disk.
+# server/blobs.py decides when that is; everything below just runs the queries.
+#
+# The digest is the SHA-256 of the content, so it alone identifies the bytes and
+# the media type is carried only so a read knows what it is serving.
+
+
+def put_blob(digest: str, media_type: str, content: bytes) -> None:
+    """Store bytes under their digest. Writing the same digest twice is free."""
+    db = get_db()
+    if db.scalar("SELECT 1 FROM blobs WHERE digest = ?", (digest,)):
+        return
+    try:
+        db.execute(
+            "INSERT INTO blobs (digest, media_type, content, size, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (digest, media_type, content, len(content), now_iso()),
+        )
+    except Exception:  # noqa: BLE001
+        # Two requests storing the same blob at once. Content addressing means
+        # whichever row won holds exactly the bytes this one was writing, so
+        # losing the race is the same as winning it.
+        pass
+
+
+def get_blob(digest: str) -> bytes | None:
+    row = get_db().query_one("SELECT content FROM blobs WHERE digest = ?", (digest,))
+    return _as_bytes(row["content"]) if row is not None else None
+
+
+def blob_exists(digest: str) -> bool:
+    return bool(get_db().scalar("SELECT 1 FROM blobs WHERE digest = ?", (digest,)))
+
+
+def delete_blob(digest: str) -> bool:
+    db = get_db()
+    if not db.scalar("SELECT 1 FROM blobs WHERE digest = ?", (digest,)):
+        return False
+    db.execute("DELETE FROM blobs WHERE digest = ?", (digest,))
+    return True
+
+
+def blob_usage_bytes() -> int:
+    return int(get_db().scalar("SELECT COALESCE(SUM(size), 0) FROM blobs") or 0)
+
+
+def clear_blobs() -> None:
+    get_db().execute("DELETE FROM blobs")

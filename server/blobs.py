@@ -6,11 +6,21 @@ that touches a paper pay for it. Addressing by SHA-256 also deduplicates for
 free: the same figure appearing on two pages, or the same paper uploaded twice,
 is stored once.
 
-On a serverless deployment the writable directory is /tmp and is cleared when
-the instance is recycled, so `available()` reports false for persistence and
-the API tells the caller that uploads will not survive. Nothing here pretends
-otherwise, because a figure that silently vanishes is worse than one that was
-never offered.
+Which leaves the deployments that have no filesystem worth the name.
+
+On a serverless tier every instance gets its own empty /tmp, so bytes written
+while serving one request are invisible to the next and gone within minutes.
+Measured on Vercel with a paper already uploaded: eight of twelve concurrent
+requests saw it and four saw an empty library, and a few minutes later none of
+them did. The database is the only storage those instances share, so when
+`runtime.persistent_disk` is false the bytes are written there as well.
+
+The filesystem is still the thing every read goes through. A row is fetched
+once and written to the local path, so the second read of a page render is a
+file read on that instance rather than a query, and `path_of` can hand a real
+path to PyMuPDF, which needs one and cannot take a row. Where the disk does
+persist, nothing is written to the database at all and this is the module it
+always was.
 """
 from __future__ import annotations
 
@@ -41,6 +51,19 @@ def persistent() -> bool:
     return runtime().can("persistent_disk")
 
 
+def _in_database() -> bool:
+    """Whether the database is holding the durable copy of every blob."""
+    return not persistent()
+
+
+def _repo():
+    # Imported lazily because the database layer is heavier than this module and
+    # a parse that never touches a blob should not pay to load it.
+    from .db import repo
+
+    return repo
+
+
 def _path_for(digest: str, media_type: str) -> Path:
     # Two levels of hex fanout. A single flat directory with tens of thousands
     # of files is slow to list on every filesystem and unusable on some.
@@ -48,20 +71,37 @@ def _path_for(digest: str, media_type: str) -> Path:
     return root() / digest[:2] / digest[2:4] / f"{digest}{suffix}"
 
 
+def _write_file(target: Path, data: bytes) -> bool:
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a sibling and rename, so a reader never sees a partial file
+        # if two requests store the same blob at once.
+        staging = target.with_suffix(target.suffix + f".{os.getpid()}.part")
+        staging.write_bytes(data)
+        staging.replace(target)
+        return True
+    except OSError:
+        # A full or read only /tmp. When the database holds the durable copy
+        # this costs a query per read and nothing else, so it is not fatal.
+        return False
+
+
 def put(data: bytes, media_type: str = "application/octet-stream") -> str:
     """Store bytes and return their digest. Writing the same bytes twice is free."""
     if media_type not in MEDIA_TYPES:
         raise ValueError(f"Refusing to store an unsupported media type: {media_type!r}")
     digest = hashlib.sha256(data).hexdigest()
+
     target = _path_for(digest, media_type)
-    if target.exists():
-        return digest
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # Write to a sibling and rename, so a reader never sees a partial file if
-    # two requests store the same blob at once.
-    staging = target.with_suffix(target.suffix + f".{os.getpid()}.part")
-    staging.write_bytes(data)
-    staging.replace(target)
+    if not target.exists():
+        _write_file(target, data)
+
+    if _in_database():
+        try:
+            _repo().put_blob(digest, media_type, data)
+        except Exception:  # noqa: BLE001 - the local copy still serves this request
+            pass
+
     return digest
 
 
@@ -70,28 +110,72 @@ def get(digest: str, media_type: str = "image/png") -> bytes | None:
     try:
         return path.read_bytes()
     except OSError:
+        pass
+
+    if not _in_database():
         return None
+
+    try:
+        data = _repo().get_blob(digest)
+    except Exception:  # noqa: BLE001
+        return None
+    if data is None:
+        return None
+
+    # Cached on the way out, so repeated reads of the same page render on this
+    # instance cost one query rather than one per read.
+    _write_file(path, data)
+    return data
 
 
 def path_of(digest: str, media_type: str = "image/png") -> Path | None:
+    """A real filesystem path, for the callers that can only take one.
+
+    PyMuPDF opens a path, not bytes, so on a database backed deployment the row
+    is materialised into the local cache here and that path is returned.
+    """
     path = _path_for(digest, media_type)
-    return path if path.exists() else None
+    if path.exists():
+        return path
+    if not _in_database():
+        return None
+    return path if get(digest, media_type) is not None and path.exists() else None
 
 
 def exists(digest: str, media_type: str = "image/png") -> bool:
-    return _path_for(digest, media_type).exists()
-
-
-def delete(digest: str, media_type: str = "image/png") -> bool:
-    path = _path_for(digest, media_type)
-    try:
-        path.unlink()
+    if _path_for(digest, media_type).exists():
         return True
-    except OSError:
+    if not _in_database():
+        return False
+    try:
+        return _repo().blob_exists(digest)
+    except Exception:  # noqa: BLE001
         return False
 
 
+def delete(digest: str, media_type: str = "image/png") -> bool:
+    removed = False
+    try:
+        _path_for(digest, media_type).unlink()
+        removed = True
+    except OSError:
+        pass
+    if _in_database():
+        try:
+            removed = _repo().delete_blob(digest) or removed
+        except Exception:  # noqa: BLE001
+            pass
+    return removed
+
+
 def usage_bytes() -> int:
+    if _in_database():
+        # The local files are a cache of these rows, so counting both would
+        # report a store twice the size it is.
+        try:
+            return _repo().blob_usage_bytes()
+        except Exception:  # noqa: BLE001
+            pass
     total = 0
     for path in root().rglob("*"):
         try:
@@ -105,3 +189,8 @@ def usage_bytes() -> int:
 def clear() -> None:
     """Remove everything. Used by the reset command, never by a request."""
     shutil.rmtree(root(), ignore_errors=True)
+    if _in_database():
+        try:
+            _repo().clear_blobs()
+        except Exception:  # noqa: BLE001
+            pass
