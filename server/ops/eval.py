@@ -180,6 +180,13 @@ def run() -> int:
         failures.append(f"retrieval eval could not run: {exc}")
 
     print()
+    print("storage with no persistent disk")
+    try:
+        failures.extend(_storage_check())
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        failures.append(f"storage eval could not run: {exc}")
+
+    print()
     if failures:
         print(f"FAILED with {len(failures)} problem(s):")
         for failure in failures:
@@ -274,7 +281,10 @@ def _retrieval_check() -> list[str]:
     with tempfile.TemporaryDirectory() as scratch:
         original = settings.SQLITE_PATH
         settings.SQLITE_PATH = __import__("pathlib").Path(scratch) / "eval.db"
-        os.environ.pop("DATABASE_URL", None)
+        # Restored in the finally below. Dropping it permanently would silently
+        # move every later check onto SQLite, including the storage one whose
+        # whole point is to run against the database the deployment uses.
+        original_url = os.environ.pop("DATABASE_URL", None)
         engine.reset_db()
         try:
             from .. import pipeline
@@ -288,7 +298,73 @@ def _retrieval_check() -> list[str]:
             return run_retrieval(result.paper_id)
         finally:
             settings.SQLITE_PATH = original
+            if original_url is not None:
+                os.environ["DATABASE_URL"] = original_url
             engine.reset_db()
+
+
+def _storage_check() -> list[str]:
+    """A deployment with no disk must still be able to read back what it stored.
+
+    On a serverless tier every instance has its own empty /tmp, so the bytes are
+    written to the database and the filesystem is only a cache. The failure this
+    catches is silent and total: uploads appear to work, and the PDF, the page
+    renders and every figure are gone the moment the instance that served the
+    upload is recycled. Measured on Vercel before the database was used, eight
+    of twelve concurrent requests saw an uploaded paper and four saw an empty
+    library, and minutes later none of them did.
+
+    The check forces the no-disk path on whatever database is configured, so it
+    covers Postgres when DATABASE_URL is set and SQLite otherwise.
+    """
+    import os
+    import pathlib
+    import shutil
+    import tempfile
+
+    from .. import blobs, runtime, settings
+
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as scratch:
+        original_blob_dir = settings.BLOB_DIR
+        original_flag = os.environ.get("EPHEMERAL_DISK")
+        settings.BLOB_DIR = pathlib.Path(scratch) / "blobs"
+        os.environ["EPHEMERAL_DISK"] = "1"
+        runtime.reset()
+        try:
+            if blobs.persistent():
+                return ["storage: EPHEMERAL_DISK did not turn the persistent disk off."]
+
+            payload = b"%PDF-1.4 eval " + os.urandom(2048)
+            digest = blobs.put(payload, "application/pdf")
+
+            # Exactly what an instance recycle does.
+            shutil.rmtree(settings.BLOB_DIR, ignore_errors=True)
+
+            if blobs.get(digest, "application/pdf") != payload:
+                failures.append(
+                    "storage: a blob did not survive the loss of the local "
+                    "filesystem, so nothing uploaded to a serverless deployment "
+                    "outlives the instance that received it."
+                )
+            shutil.rmtree(settings.BLOB_DIR, ignore_errors=True)
+            path = blobs.path_of(digest, "application/pdf")
+            if path is None or not path.exists():
+                failures.append(
+                    "storage: path_of did not materialise a file, so the page "
+                    "renderer has nothing to open."
+                )
+            blobs.delete(digest, "application/pdf")
+            print(f"  {'ok  ' if not failures else 'FAIL'}  blob recovered from the "
+                  f"database with no local files")
+        finally:
+            settings.BLOB_DIR = original_blob_dir
+            if original_flag is None:
+                os.environ.pop("EPHEMERAL_DISK", None)
+            else:
+                os.environ["EPHEMERAL_DISK"] = original_flag
+            runtime.reset()
+    return failures
 
 
 def _overlap(a, b) -> float:
