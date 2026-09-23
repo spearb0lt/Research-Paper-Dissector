@@ -258,7 +258,17 @@ def _columns(conn, dialect: str) -> dict[str, set[str]]:
                     "SELECT table_name, column_name FROM information_schema.columns "
                     "WHERE table_schema = current_schema()"
                 )
-                for table, column in cur.fetchall():
+                for row in cur.fetchall():
+                    # The connection is opened with psycopg's dict_row factory,
+                    # so a row is a mapping. Unpacking it as a pair yields its
+                    # two key names instead of the values, which reads as a
+                    # catalogue where every table is called "table_name" and
+                    # sends every ALTER below straight into a table that already
+                    # has the column.
+                    if isinstance(row, dict):
+                        table, column = row["table_name"], row["column_name"]
+                    else:
+                        table, column = row[0], row[1]
                     out.setdefault(str(table), set()).add(str(column))
         else:
             names = [
@@ -275,6 +285,30 @@ def _columns(conn, dialect: str) -> dict[str, set[str]]:
     return out
 
 
+def _try(conn, dialect: str, sql: str) -> bool:
+    """Run a statement that is allowed to fail, without losing the schema with it.
+
+    Postgres aborts the entire transaction on any error, so a swallowed failure
+    is not the local no-op it looks like: every later statement fails too and
+    the commit throws away the tables created before it. The statements below
+    are all ones that are *expected* to fail once they have been applied, which
+    on a second boot turned the whole of create_all into a no-op and left a
+    fresh database with no tables at all.
+
+    A savepoint scopes the failure to the one statement. SQLite runs in
+    autocommit here, where a failure is already local.
+    """
+    try:
+        if dialect == "postgres":
+            with conn.transaction():
+                conn.execute(sql)
+        else:
+            conn.execute(sql)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def create_all(db) -> None:
     # One connection for the whole schema, and `conn.execute` rather than
     # `db.execute`, because the latter calls ensure_schema and would recurse
@@ -287,21 +321,15 @@ def create_all(db) -> None:
         for table, column, spec in ADDED_COLUMNS:
             if column in existing.get(table, set()):
                 continue
-            try:
-                conn.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {column} "
-                    + render_ddl(spec, db.dialect)
-                )
-            except Exception:  # noqa: BLE001
-                # A race with another process adding the same column, or a
-                # dialect that already had it. Neither is worth refusing to boot.
-                pass
+            # A race with another process adding the same column, or a
+            # catalogue that could not be read. Neither is worth refusing to
+            # boot over, and neither may take the schema down with it.
+            _try(conn, db.dialect,
+                 f"ALTER TABLE {table} ADD COLUMN {column} "
+                 + render_ddl(spec, db.dialect))
 
         for statement in INDEXES:
-            try:
-                conn.execute(statement)
-            except Exception:  # noqa: BLE001
-                # An index failing is never a reason not to boot. The usual
-                # cause is a unique index over data that predates it, which is
-                # a problem to report rather than one to crash on.
-                pass
+            # An index failing is never a reason not to boot. The usual cause is
+            # a unique index over data that predates it, which is a problem to
+            # report rather than one to crash on.
+            _try(conn, db.dialect, statement)
