@@ -288,9 +288,10 @@ def detect() -> Runtime:
             label="Disk that survives a restart",
             available=persistent,
             reason=(
-                "Only /tmp is writable here and it is cleared when the instance "
-                "is recycled. Uploaded papers must live in the database or in "
-                "object storage to survive."
+                "Only /tmp is writable here and it is cleared when the "
+                "instance is recycled, so uploaded papers and figures are kept "
+                "in the database instead. Point DATABASE_URL at a shared "
+                "Postgres or nothing will outlive the instance that received it."
                 if not persistent
                 else ""
             ),

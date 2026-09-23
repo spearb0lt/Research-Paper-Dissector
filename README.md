@@ -347,7 +347,7 @@ halves running and at least one paper in the library.
 | **Docker / Compose** | everything | `docker compose up --build`, published on 8099 |
 | **Render, standard** | deep parse, OCR, rerank | 2 GB. Blueprint in `render.yaml`. |
 | **Render, free** | fast parse, BM25, local vectors | 512 MB is not enough for layout models, and a free instance cannot mount a disk, so uploads live in `/tmp`. Both report themselves rather than failing. |
-| **Vercel** | fast parse, BM25, local vectors | 500 MB function limit. Needs `DATABASE_URL`; the filesystem is ephemeral, so uploads do not survive and the UI says so. |
+| **Vercel** | fast parse, BM25, local vectors | 500 MB function limit. Needs `DATABASE_URL`: each instance has its own empty `/tmp`, so PDFs and figures are stored in the database and the filesystem is only a cache. Without one, nothing outlives the request that uploaded it. |
 
 `server/runtime.py` detects the platform and decides what is possible. Adding a
 hosting target means teaching `detect()` about it, not editing the parser.
