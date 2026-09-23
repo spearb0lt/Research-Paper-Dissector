@@ -1,0 +1,43 @@
+# What is NOT uploaded to Vercel.
+#
+# This file replaces .gitignore rather than adding to it: once it exists, the
+# CLI stops consulting .gitignore entirely. So everything secret or large is
+# repeated here even where .gitignore already covers it. Leaving a rule out of
+# this file is how a local .env reaches a public deployment.
+
+.env
+.env.*
+!.env.example
+
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+node_modules/
+.next/
+*.tsbuildinfo
+
+# The local library: uploaded PDFs, the SQLite database and every extracted
+# figure crop. Tens of megabytes of one person's reading, which has no business
+# on a public instance that builds its own library from scratch.
+data/
+
+# README media is served by GitHub and never requested from the deployment.
+docs/media/
+
+# Everything the deep tier needs. None of it fits in a serverless bundle, and
+# runtime.py already reports those capabilities unavailable here with a reason.
+requirements-server.txt
+
+# The float PyTorch weights and the download lock directory. Only the quantised
+# ONNX export beside them is loaded at runtime: 23 MB against this one's 88 MB,
+# and the bundle limit is what decides whether dense retrieval ships at all.
+Semantic Models/models--sentence-transformers--all-MiniLM-L6-v2/
+Semantic Models/.locks/
+Semantic Models/CACHEDIR.TAG
+
+.git/
+.github/
+.DS_Store

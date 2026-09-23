@@ -10,6 +10,10 @@ node_modules/
 .next/
 *.tsbuildinfo
 
+# Written by the Vercel CLI when a directory is linked to a project. It holds
+# the project and org ids, which are not secret but are per account.
+.vercel/
+
 # Data and secrets
 .env
 .env.local
