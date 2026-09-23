@@ -180,6 +180,10 @@ def run() -> int:
         failures.append(f"retrieval eval could not run: {exc}")
 
     print()
+    print("portability")
+    failures.extend(_binding_check())
+
+    print()
     print("storage with no persistent disk")
     try:
         failures.extend(_storage_check())
@@ -301,6 +305,43 @@ def _retrieval_check() -> list[str]:
             if original_url is not None:
                 os.environ["DATABASE_URL"] = original_url
             engine.reset_db()
+
+
+def _binding_check() -> list[str]:
+    """Text a PDF produced must be storable on either dialect.
+
+    Postgres refuses NUL in a text field, SQLite stores it happily, so this is
+    invisible on a laptop and fatal on a deployment. colpali.pdf carries 174576
+    of them, and its ingest died on Postgres with psycopg.DataError after
+    writing 31 MB of blobs for a paper that then did not exist.
+
+    Checked at the binder rather than by ingesting, so it costs nothing and
+    still fails if someone routes a query around it.
+    """
+    from ..db.engine import bind
+
+    failures: list[str] = []
+    nul = chr(0)
+
+    stripped = bind([f"a{nul}b"])[0]
+    if stripped != "ab":
+        failures.append(
+            f"portability: NUL survived parameter binding as {stripped!r}, so a "
+            "paper whose text contains one cannot be stored on Postgres."
+        )
+
+    # The mirror of that bug: stripping NUL from a BLOB would corrupt every
+    # index, figure and PDF, all of which contain 0x00 as ordinary content.
+    payload = b"a" + bytes([0]) + b"b"
+    if bind([payload])[0] != payload:
+        failures.append(
+            "portability: binding altered a bytes parameter, which would "
+            "corrupt stored PDFs and the serialised indexes."
+        )
+
+    print(f"  {'ok  ' if not failures else 'FAIL'}  NUL stripped from text, "
+          f"kept in blobs")
+    return failures
 
 
 def _storage_check() -> list[str]:

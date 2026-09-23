@@ -110,6 +110,30 @@ class Row(dict):
             raise AttributeError(name) from exc
 
 
+_NUL = "\x00"
+
+
+def bind(params: Sequence[Any]) -> tuple[Any, ...]:
+    """Query parameters, with NUL stripped out of every string.
+
+    Postgres refuses NUL in a text field and SQLite stores it without
+    complaint, so a paper whose text layer contains one ingests on a laptop and
+    dies on a deployment with psycopg.DataError. Real PDFs do produce them:
+    ColPali's text carries NUL bytes, and on Postgres that ingest failed after
+    writing 31 MB of blobs, leaving the paper absent and its storage used.
+
+    The byte means nothing in extracted text, so it is dropped rather than
+    escaped, and dropped on both dialects, because a paper that reads
+    differently depending on where it is stored is the bug this layer exists to
+    prevent. Only str is touched. A bytes parameter is a BLOB, where 0x00 is
+    ordinary content and removing it would corrupt an index or a PDF.
+    """
+    return tuple(
+        value.replace(_NUL, "") if isinstance(value, str) and _NUL in value else value
+        for value in params
+    )
+
+
 class Database:
     def __init__(self, url: str | None = None) -> None:
         self.url = (url or settings.DATABASE_URL or "").strip()
@@ -179,7 +203,7 @@ class Database:
     def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
         self.ensure_schema()
         with self.connect() as conn:
-            conn.execute(self._prepare(sql), tuple(params))
+            conn.execute(self._prepare(sql), bind(params))
 
     def execute_many(self, sql: str, rows: Sequence[Sequence[Any]]) -> None:
         if not rows:
@@ -189,18 +213,18 @@ class Database:
         with self.connect() as conn:
             if self.dialect == Dialect.POSTGRES:
                 with conn.cursor() as cur:
-                    cur.executemany(prepared, [tuple(r) for r in rows])
+                    cur.executemany(prepared, [bind(r) for r in rows])
             else:
-                conn.executemany(prepared, [tuple(r) for r in rows])
+                conn.executemany(prepared, [bind(r) for r in rows])
 
     def query(self, sql: str, params: Sequence[Any] = ()) -> list[Row]:
         self.ensure_schema()
         with self.connect() as conn:
             if self.dialect == Dialect.POSTGRES:
                 with conn.cursor() as cur:
-                    cur.execute(self._prepare(sql), tuple(params))
+                    cur.execute(self._prepare(sql), bind(params))
                     return [Row(r) for r in cur.fetchall()]
-            cur = conn.execute(sql, tuple(params))
+            cur = conn.execute(sql, bind(params))
             return [Row(dict(r)) for r in cur.fetchall()]
 
     def query_one(self, sql: str, params: Sequence[Any] = ()) -> Row | None:
@@ -225,10 +249,10 @@ class Database:
             if self.dialect == Dialect.POSTGRES:
                 statement = sql if "returning" in sql.lower() else f"{sql} RETURNING id"
                 with conn.cursor() as cur:
-                    cur.execute(self._prepare(statement), tuple(params))
+                    cur.execute(self._prepare(statement), bind(params))
                     row = cur.fetchone()
                     return int(row["id"]) if row else 0
-            cur = conn.execute(sql, tuple(params))
+            cur = conn.execute(sql, bind(params))
             return int(cur.lastrowid or 0)
 
     @contextmanager
@@ -278,14 +302,14 @@ class _Tx:
         self._conn = conn
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
-        self._conn.execute(self._db._prepare(sql), tuple(params))
+        self._conn.execute(self._db._prepare(sql), bind(params))
 
     def query(self, sql: str, params: Sequence[Any] = ()) -> list[Row]:
         if self._db.dialect == Dialect.POSTGRES:
             with self._conn.cursor() as cur:
-                cur.execute(self._db._prepare(sql), tuple(params))
+                cur.execute(self._db._prepare(sql), bind(params))
                 return [Row(r) for r in cur.fetchall()]
-        cur = self._conn.execute(sql, tuple(params))
+        cur = self._conn.execute(sql, bind(params))
         return [Row(dict(r)) for r in cur.fetchall()]
 
     def query_one(self, sql: str, params: Sequence[Any] = ()) -> Row | None:
@@ -296,10 +320,10 @@ class _Tx:
         if self._db.dialect == Dialect.POSTGRES:
             statement = sql if "returning" in sql.lower() else f"{sql} RETURNING id"
             with self._conn.cursor() as cur:
-                cur.execute(self._db._prepare(statement), tuple(params))
+                cur.execute(self._db._prepare(statement), bind(params))
                 row = cur.fetchone()
                 return int(row["id"]) if row else 0
-        cur = self._conn.execute(sql, tuple(params))
+        cur = self._conn.execute(sql, bind(params))
         return int(cur.lastrowid or 0)
 
 
