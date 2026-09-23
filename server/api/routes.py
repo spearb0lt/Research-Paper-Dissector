@@ -49,10 +49,24 @@ def health() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - the whole point is to report it
         checks["database"] = False
         checks["database_error"] = str(exc)[:300]
+
+    # Where the database also holds the blobs there is a quota to watch, and a
+    # free Postgres tier gives half a gigabyte. Reporting it here means an
+    # operator can see the number climbing before writes start failing.
+    storage: dict[str, Any] = {}
+    try:
+        storage = {
+            "blob_bytes": blobs.usage_bytes(),
+            "blobs_in_database": not blobs.persistent(),
+        }
+    except Exception:  # noqa: BLE001 - a broken count must not fail the check
+        pass
+
     return {
         "ok": all(v for v in checks.values() if isinstance(v, bool)),
         "app": settings.APP_NAME,
         "checks": checks,
+        "storage": storage,
         "runtime": runtime().as_dict(),
     }
 
@@ -149,7 +163,14 @@ def get_paper(paper_id: int) -> dict[str, Any]:
 @router.delete("/papers/{paper_id}")
 def delete_paper(paper_id: int) -> dict[str, Any]:
     repo.delete_paper(paper_id)
-    return {"ok": True}
+    # The rows go first, then the bytes they were the last reference to. Storage
+    # is content addressed and shared, so a blob is only garbage once no paper
+    # points at it, which is a question that can only be asked after the delete.
+    # Without this the PDF, every figure crop and every cached page render
+    # outlive the paper for ever, which on a database backed deployment is a
+    # free tier filling up behind an empty library.
+    removed, freed = blobs.collect_orphans()
+    return {"ok": True, "blobs_removed": removed, "bytes_freed": freed}
 
 
 @router.post("/papers")

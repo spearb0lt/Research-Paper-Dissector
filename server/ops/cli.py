@@ -217,7 +217,24 @@ def delete(args: argparse.Namespace) -> int:
         _print("No such paper.")
         return 1
     repo.delete_paper(args.paper_id)
+    removed, freed = blobs.collect_orphans()
     _print(f"Removed #{args.paper_id} {paper['title']}")
+    if removed:
+        _print(f"  freed {removed} blob(s), {freed / 1e6:.1f} MB")
+    return 0
+
+
+def gc(_: argparse.Namespace) -> int:
+    """Sweep stored bytes nothing points at any more.
+
+    Worth running on its own after a reindex or a failed parse, both of which
+    can leave a crop or a render behind without deleting a paper.
+    """
+    before = blobs.usage_bytes()
+    removed, freed = blobs.collect_orphans()
+    _print(f"blobs before   {before / 1e6:.1f} MB")
+    _print(f"removed        {removed} orphan(s), {freed / 1e6:.1f} MB")
+    _print(f"blobs now      {blobs.usage_bytes() / 1e6:.1f} MB")
     return 0
 
 
@@ -269,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
     delete_parser = sub.add_parser("delete", help="Remove a paper")
     delete_parser.add_argument("paper_id", type=int)
     delete_parser.set_defaults(fn=delete)
+
+    sub.add_parser(
+        "gc", help="Delete stored bytes no paper refers to any more"
+    ).set_defaults(fn=gc)
 
     args = parser.parse_args(argv)
     get_db().ensure_schema()

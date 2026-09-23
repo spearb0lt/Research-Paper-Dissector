@@ -194,3 +194,50 @@ def clear() -> None:
             _repo().clear_blobs()
         except Exception:  # noqa: BLE001
             pass
+
+
+def collect_orphans() -> tuple[int, int]:
+    """Delete stored bytes no paper refers to any more. Returns (count, bytes).
+
+    Deleting a paper cannot delete its blobs directly, because storage is
+    content addressed and therefore shared: the same figure can appear on two
+    pages and the same PDF can be uploaded twice, so a digest is only garbage
+    once nothing at all points at it.
+
+    This matters more on a database backed deployment than it ever did on a
+    disk. A paper is a few megabytes of PDF, a crop per figure and a cached
+    render per page viewed, so a library that is added to and cleared out a few
+    times will quietly outgrow a free Postgres tier while showing an empty
+    shelf. The Remove button promises "everything extracted from it", and this
+    is the half of that promise the row deletes do not keep.
+    """
+    repo = _repo()
+    referenced = repo.referenced_digests()
+    removed = 0
+    freed = 0
+
+    if _in_database():
+        for digest, size in repo.stored_digests():
+            if digest in referenced:
+                continue
+            if repo.delete_blob(digest):
+                removed += 1
+                freed += size
+
+    # The local files too, whether they are the store or a cache of it. An
+    # orphan left here is still holding a disk the operator is paying for.
+    for path in root().rglob("*"):
+        try:
+            if not path.is_file() or path.name.endswith(".part"):
+                continue
+            if path.stem in referenced:
+                continue
+            size = path.stat().st_size
+            path.unlink()
+            if not _in_database():
+                removed += 1
+                freed += size
+        except OSError:
+            continue
+
+    return removed, freed

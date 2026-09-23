@@ -354,9 +354,23 @@ def _storage_check() -> list[str]:
                     "storage: path_of did not materialise a file, so the page "
                     "renderer has nothing to open."
                 )
-            blobs.delete(digest, "application/pdf")
             print(f"  {'ok  ' if not failures else 'FAIL'}  blob recovered from the "
                   f"database with no local files")
+
+            # Nothing in the library points at that blob, so a sweep must take
+            # it. Left uncollected, every removed paper's PDF, crops and cached
+            # page renders stay for ever, and a free Postgres tier fills up
+            # behind a library the user has already emptied.
+            before = len(failures)
+            removed, _freed = blobs.collect_orphans()
+            if removed < 1 or blobs.get(digest, "application/pdf") is not None:
+                failures.append(
+                    "storage: an unreferenced blob survived collect_orphans, so "
+                    "deleting a paper does not free what it stored."
+                )
+            print(f"  {'ok  ' if len(failures) == before else 'FAIL'}  an "
+                  f"unreferenced blob is swept")
+            blobs.delete(digest, "application/pdf")
         finally:
             settings.BLOB_DIR = original_blob_dir
             if original_flag is None:

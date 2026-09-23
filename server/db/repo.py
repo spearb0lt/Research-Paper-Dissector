@@ -824,3 +824,36 @@ def blob_usage_bytes() -> int:
 
 def clear_blobs() -> None:
     get_db().execute("DELETE FROM blobs")
+
+
+def referenced_digests() -> set[str]:
+    """Every blob digest some surviving paper still points at.
+
+    Three places refer to stored bytes: the uploaded PDF on the paper, the
+    render cached per page inside the paper's page list, and the crop on a
+    figure element. The page list is JSON, and the two dialects disagree about
+    how to query inside it, so it is read in Python instead.
+    """
+    db = get_db()
+    referenced: set[str] = set()
+
+    for row in db.query("SELECT blob_digest, pages FROM papers"):
+        if row["blob_digest"]:
+            referenced.add(str(row["blob_digest"]))
+        for entry in _json(row["pages"], []):
+            digest = (entry or {}).get("render_digest")
+            if digest:
+                referenced.add(str(digest))
+
+    for row in db.query(
+        "SELECT DISTINCT image_digest FROM elements WHERE image_digest IS NOT NULL"
+    ):
+        if row["image_digest"]:
+            referenced.add(str(row["image_digest"]))
+
+    return referenced
+
+
+def stored_digests() -> list[tuple[str, int]]:
+    rows = get_db().query("SELECT digest, size FROM blobs")
+    return [(str(r["digest"]), int(r["size"] or 0)) for r in rows]
