@@ -28,20 +28,24 @@ services:
       npm run build
     startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 65
     healthCheckPath: /api/health
-    disk:
-      # Uploaded PDFs and extracted figures. Without a disk these live in /tmp
-      # and are gone on every restart, and the app says so in the header rather
-      # than losing them silently.
-      name: dissect-data
-      mountPath: /var/data
-      sizeGB: 10
+    # No disk here on purpose. Render allows a persistent disk only on a paid
+    # instance, so declaring one beside `plan: free` makes the blueprint fail
+    # validation rather than fall back. Uploaded PDFs and figure crops
+    # therefore live in /tmp and are lost on redeploy and after each spin down.
+    # The app detects that and says so in the header instead of losing them
+    # quietly. To keep them, move to a paid instance and add:
+    #
+    #   disk:
+    #     name: dissect-data
+    #     mountPath: /var/data
+    #     sizeGB: 10
+    #
+    # and set DATA_DIR to /var/data below.
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.8"
       - key: NODE_VERSION
         value: "22"
-      - key: DATA_DIR
-        value: /var/data
       - key: DATABASE_URL
         fromDatabase:
           name: dissect-db
