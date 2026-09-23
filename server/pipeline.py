@@ -124,20 +124,31 @@ def ingest(
             ) if not blobs.persistent() else "",
         )
 
-    result = _parse(paper_id, str(pdf_path), parse_mode, ocr, say)
-    _commit(paper_id, result, filename)
+    try:
+        result = _parse(paper_id, str(pdf_path), parse_mode, ocr, say)
+        _commit(paper_id, result, filename)
 
-    index_started = time.monotonic()
-    chunk_count, dense_on = _index(
-        paper_id,
-        result,
-        dense=dense,
-        embedding_provider=embedding_provider,
-        chunk_tokens=chunk_tokens,
-        chunk_overlap=chunk_overlap,
-        say=say,
-    )
-    index_seconds = time.monotonic() - index_started
+        index_started = time.monotonic()
+        chunk_count, dense_on = _index(
+            paper_id,
+            result,
+            dense=dense,
+            embedding_provider=embedding_provider,
+            chunk_tokens=chunk_tokens,
+            chunk_overlap=chunk_overlap,
+            say=say,
+        )
+        index_seconds = time.monotonic() - index_started
+    except Exception as exc:
+        # Only ParseError was ever recorded, and only inside _parse. Anything
+        # thrown while committing or indexing left the row at "parsing", where
+        # it stays for ever: the library shows a paper permanently working, and
+        # its stored PDF stays referenced and so survives every sweep. That is
+        # what a NUL byte in colpali.pdf produced on Postgres, an 8 MB file held
+        # by a paper that never existed.
+        reason = getattr(exc, "message", "") or f"{type(exc).__name__}: {exc}"
+        repo.set_status(paper_id, "failed", str(reason)[:300])
+        raise
 
     repo.set_status(paper_id, "ready")
     say("done", "Ready", 1.0)
