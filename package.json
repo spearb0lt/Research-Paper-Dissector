@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "api": "uvicorn server.main:app --port 8099 --reload",
     "capture": "node scripts/capture.mjs",
-    "diagram": "node scripts/architecture.mjs"
+    "diagram": "node scripts/diagrams.mjs"
   },
   "dependencies": {
     "next": "15.5.25",

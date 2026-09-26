@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dissect extraction pipelines</title>
+<link rel="stylesheet" href="diagram.css">
+<!--
+  The second diagram sheet: one lane per kind of thing recovered from a PDF.
+
+  docs/architecture.html shows how the application fits together. This shows
+  what happens inside the one box on it labelled "Parse", because that is where
+  almost every hard problem in the project lives.
+
+      npm run diagram
+
+  Every constant printed here is the real value from the module named beside it.
+-->
+</head>
+<body>
+<div class="sheet">
+
+  <!-- ============================================================ head -->
+  <div class="masthead">
+    <div>
+      <h1>Extraction pipelines, one per kind</h1>
+      <p>
+        What happens inside the single box marked <b>Parse</b> on the architecture sheet. A PDF has no
+        paragraphs, no tables and no figures in it: it has glyphs at coordinates, ruling lines, and image
+        objects. Everything below is the work of turning that back into things a reader named.
+        Every constant shown is the real value from the module beside it.
+      </p>
+    </div>
+    <div class="facts">
+      <div class="fact"><b>0</b><span>models in the fast tier</span></div>
+      <div class="fact"><b>~25 MB</b><span>of dependencies</span></div>
+      <div class="fact"><b>4 / 5</b><span>exact column counts</span></div>
+      <div class="fact"><b>2.5 s</b><span>to parse 15 pages</span></div>
+    </div>
+  </div>
+
+  <!-- =================================================== order of work -->
+  <section class="panel">
+    <h2>0 &nbsp;The order the fast parser does things, and why that order</h2>
+    <p class="lede">
+      <code>FastParser.parse()</code>. The sequence is not arbitrary: three steps exist only because a later
+      step needs their output, and moving them breaks things that look unrelated.
+    </p>
+    <div class="flow">
+      <div class="stage warnt">
+        <h3>1. Table bands, first</h3>
+        <span class="file">tables.table_bands(page)</span>
+        <p>
+          Before <b>any</b> text is grouped. A ruling line is the only reliable signal that a caption has
+          ended and a table has begun. Without this, a caption set in body font keeps absorbing the table's
+          own rows and ends up with a bounding box overlapping the table it labels.
+        </p>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>2. Collect spans</h3>
+        <span class="file">_collect_spans</span>
+        <p>
+          Every span with its font, size, weight, position and per font character counts. The font census is
+          collected here once and paid for by heading detection, equation detection and margin detection
+          alike.
+        </p>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage tint">
+        <h3>3. Three page statistics</h3>
+        <span class="file">_body_font_size &middot; body_fonts &middot; _body_width</span>
+        <p>
+          The modal body size, the set of fonts that carry body text, and the body column width. Every
+          classification below is relative to these, so a paper set in 9pt and one set in 12pt are read the
+          same way.
+        </p>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>4. Group and classify</h3>
+        <span class="file">_elements_from_spans &middot; _classify</span>
+        <p>
+          Spans become runs, runs become elements. Sections attached, then figures and tables extracted,
+          merged, and sorted by page and vertical position to fix reading order.
+        </p>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage goodt">
+        <h3>5. Link, split, link</h3>
+        <span class="file">_link_captions &middot; split_references &middot; link_markers</span>
+        <p>
+          Captions paired with what they label. Then <b>sections must be settled first</b>, because splitting
+          applies only to the references section, and only <code>_attach_sections</code> knows which elements
+          are in it.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================== lanes -->
+  <section class="panel">
+    <h2>1 &nbsp;Text: paragraphs, headings and list items</h2>
+
+    <div class="lane k-text">
+      <div class="lane-head">
+        <h3>Runs of prose</h3>
+        <span class="file">parse/fast.py &rarr; _elements_from_spans</span>
+        <p>Glyph spans to a paragraph</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Detect</h4>
+          <p>Consecutive spans accumulate into one run while they share a page, a column and a font size.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Break the run on any of</h4>
+          <p>A vertical gap of <code>&ge; line_height &times; 0.9</code>, about one blank line.</p>
+          <p>Crossing a <b>table band</b>.</p>
+          <p><code>is_formula</code> changing between one line and the next.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Classify the run</h4>
+          <p><b>Heading</b>: at most 140 characters and either <code>size &ge; body + 0.8</code> or bold at
+            <code>&ge; body - 0.2</code>, and it does not end like prose.</p>
+          <p><b>List item</b>: starts with a bullet or an enumerator.</p>
+          <p>Otherwise a <b>paragraph</b>.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Level and margin</h4>
+          <p>Heading level from size above body: <code>+5.0</code> is 1, <code>+2.5</code> is 2,
+            <code>+0.8</code> is 3, else 4.</p>
+          <p>Text inside the outer <code>5.5%</code> of the page is a running head or a page number, not prose.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane k-accent">
+      <div class="lane-head">
+        <h3>Sections</h3>
+        <span class="file">parse/sections.py</span>
+        <p>Headings to the sections a reader asks about</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Strip the numbering</h4>
+          <p>Leading <code>3</code>, <code>3.2</code>, <code>IV</code>, <code>A.1</code>,
+            <code>Appendix B</code> removed before matching.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Lexical, not learned</h4>
+          <p>"Methods", "Methodology", "Materials and Methods", "Approach", "Our Model" all reach the same
+            section. A classifier here would sit on the parse path, be wrong in ways nobody could debug, and
+            buy very little.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step warnt">
+          <h4>Order matters</h4>
+          <p>"Related Work" contains <i>work</i> and "Experimental Setup" contains <i>experiment</i>, so the
+            more specific patterns are tested first.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>A miss is survivable</h4>
+          <p>An unmatched heading falls back to <code>UNKNOWN</code>. The element still indexes and still
+            retrieves; only the section filter loses it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================= tables -->
+  <section class="panel">
+    <h2>2 &nbsp;Tables, the hardest one</h2>
+    <p class="lede">
+      Scientific papers use <b>booktabs</b>: rules above the header, below the header and at the foot, and no
+      vertical rules at all. That breaks every finder that looks for intersecting lines, and it breaks the
+      usual fallback of inferring both axes from whitespace. Both failures were measured before this was
+      written: pdfplumber and PyMuPDF's own <code>find_tables</code> each turned body text on page 3 of
+      "Attention Is All You Need" into a <b>22 by 8 table of word fragments</b>.
+    </p>
+
+    <div class="lane k-table">
+      <div class="lane-head">
+        <h3>Structure from rules</h3>
+        <span class="file">parse/tables.py</span>
+        <p>Constants set by sweep, not by taste</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>1. Horizontal rules</h4>
+          <p>A rule narrower than <code>10%</code> of the page is a leader dot or an underline, not a table.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>2. Group into a band</h4>
+          <p>Rules whose x-extent matches to <code>80%</code> and which sit within <code>420 pt</code> of each
+            other form one band.</p>
+          <p><b>Two or more aligned rules is what a table looks like and what a paragraph never does.</b> This
+            step alone removes the false positives.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>3. Rows</h4>
+          <p>Words cluster into rows by vertical centre, within <code>0.55</code> of the median glyph height.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>4. Columns by projection</h4>
+          <p>Every word is projected onto the x-axis at <code>0.5 pt</code> buckets. A column boundary is a run
+            no word covers in <code>&ge; 90%</code> of rows and at least <code>half a character</code> wide.</p>
+          <p>A results table is column aligned by construction, so these gaps are real and sharp.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>5. Tidy</h4>
+          <p>Wrapped header lines merged at <code>0.72</code> line spacing, stray headings dropped at
+            <code>2.2</code>, prose rows rejected.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane k-table">
+      <div class="lane-head">
+        <h3>When structure fails</h3>
+        <span class="file">fast.py &rarr; _extract_tables</span>
+        <p>Emit it anyway, and say so</p>
+      </div>
+      <div class="steps">
+        <div class="step goodt">
+          <h4>Confident</h4>
+          <p>Grid stored as cells, plus <b>markdown</b> for the prompt and <b>HTML</b> for nothing: the UI
+            renders from the grid, never from parser produced HTML.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step warnt">
+          <h4>Not confident</h4>
+          <p>The table is still emitted, with <code>structure_confident</code> false and its region
+            <b>rendered as an image</b>.</p>
+          <p>A table a reader can see and a vision model can read beats a table that silently went missing.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Carried into the prompt</h4>
+          <p>The chunk says in words that the column structure was inferred and that the image is
+            authoritative, so the model does not state a guessed number as fact.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step dang">
+          <h4>Known loss</h4>
+          <p>A header set <b>above</b> the toprule is outside the band and is read as caption instead. Table 2
+            of the Transformer paper is laid out this way: rows and column count correct, names in the caption
+            rather than the grid.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================== figures -->
+  <section class="panel">
+    <h2>3 &nbsp;Figures, two passes because there are two kinds</h2>
+    <p class="lede">
+      A photograph is an embedded image object and can be extracted losslessly. A chart drawn with vector
+      primitives, which is <b>most charts matplotlib or TikZ produce</b>, has no image object at all and has
+      to be rasterised from the region a caption points at.
+    </p>
+
+    <div class="lane k-figure">
+      <div class="lane-head">
+        <h3>Pass 1: embedded</h3>
+        <span class="file">fast.py &rarr; _extract_figures</span>
+        <p>Lossless, from the image objects</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Every image xref</h4>
+          <p>Decoded to PNG. CMYK is converted to RGB first, because CMYK has no PNG encoding.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Reject the furniture</h4>
+          <p>Smaller than <code>48 &times; 48</code>: a rule, a logo or a background texture.</p>
+          <p>Larger than <code>92%</code> of the page: a scan or a watermark, not a figure.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Dedupe by digest</h4>
+          <p>The same bytes on twelve pages, a journal logo, store and appear once.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Store</h4>
+          <p>Content addressed PNG, with its true pixel dimensions and its rectangle on the page.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane k-figure">
+      <div class="lane-head">
+        <h3>Pass 2: vector</h3>
+        <span class="file">fast.py &rarr; _render_vector_figures</span>
+        <p>Rasterise what has no image object</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Start from the caption</h4>
+          <p>Only captions labelled <code>Figure</code>, <code>Fig</code>, <code>Chart</code> or
+            <code>Scheme</code>. The figure sits above its caption in every convention this will meet.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Find the ceiling</h4>
+          <p>Scan <b>everything above</b>, elements and already found figures alike, for the nearest thing that
+            overlaps the caption's column by more than <code>30%</code>.</p>
+          <p>Searching only elements was a real bug: already extracted figures were invisible, so two figures
+            on one page were <b>cropped as one</b>.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Reject and render</h4>
+          <p>Skip a region under <code>40 &times; 40</code>, or one overlapping an embedded figure by more than
+            <code>50%</code> either way.</p>
+          <p>Otherwise render the clip at <code>FIGURE_SCALE = 2.0</code>.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step warnt">
+          <h4>Honest about it</h4>
+          <p>The crop is a guess, and <code>extra.source</code> records <code>rendered</code> against
+            <code>embedded</code>. A slightly over-cropped figure beats a missing one, and the quality report
+            counts them.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane k-figure">
+      <div class="lane-head">
+        <h3>Captions</h3>
+        <span class="file">fast.py &rarr; _link_captions</span>
+        <p>Pair each with what it labels</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Recognise</h4>
+          <p>A run matching <code>Figure 3</code>, <code>Table 2</code>, <code>Equation 4</code> becomes a
+            caption element carrying a normalised label.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Conventional side first</h4>
+          <p>A figure caption sits below its figure, a table caption above its table. Enough venue templates
+            break that rule that hardcoding the direction loses real pairings, so the other side is searched
+            only if the conventional one finds nothing, at a tighter limit: <code>220 pt</code> then
+            <code>90 pt</code>.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Nearest wins</h4>
+          <p>Two figures on a page do not both get the same caption. A tolerance of <code>-6 pt</code> allows
+            for a caption's glyph box overhanging the rule that starts a table.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step goodt">
+          <h4>It travels</h4>
+          <p>The caption is stored <b>on</b> the figure or table, so it goes into the chunk, the index and the
+            prompt with it, rather than sitting nearby as unrelated text.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================== equations -->
+  <section class="panel">
+    <h2>4 &nbsp;Display equations, found by what is absent</h2>
+    <p class="lede">
+      The obvious test, "does this line use a maths font", does not work: in a LaTeX paper the body font and
+      the maths fonts are mixed constantly inside ordinary prose, because every inline symbol is set in one.
+      Both lines below are from page 4 of "Attention Is All You Need".
+    </p>
+    <div class="grid g2" style="margin-bottom:11px">
+      <div class="stage dang">
+        <h3>Prose, with symbols in it</h3>
+        <span class="file">fonts = CMMI10, CMMI7, NimbusRomNo9L-Regu</span>
+        <p><i>"queries and keys of dimension dk, and values of dimension dv. We compute"</i></p>
+        <div class="note">A maths font is present. This is a sentence.</div>
+      </div>
+      <div class="stage goodt">
+        <h3>A display equation</h3>
+        <span class="file">fonts = CMMI10, CMMI7, CMR10</span>
+        <p><i>"Attention(Q, K, V ) = softmax(QKT"</i></p>
+        <div class="note">No body font anywhere on the line. That is the discriminator.</div>
+      </div>
+    </div>
+
+    <div class="lane k-formula">
+      <div class="lane-head">
+        <h3>Detection</h3>
+        <span class="file">parse/formulas.py</span>
+        <p>Nearly free: the fonts are already counted</p>
+      </div>
+      <div class="steps">
+        <div class="step tint">
+          <h4>The test</h4>
+          <p>The line's fonts intersected with the body font set must be <b>empty</b>. The census was already
+            collected for heading detection, so this costs nothing extra.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Confirm it is maths</h4>
+          <p>At least <code>4</code> characters, and either a maths glyph or <code>&ge; 40%</code> of characters
+            in a maths font, plus a <b>relation</b>: one of
+            <code>= &ne; &le; &ge; &isin; &sub; &sim; &prop; &rarr; &rArr;</code> and the rest.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step warnt">
+          <h4>Reject the lookalikes</h4>
+          <p>Angle brackets are relations, so <code>&lt;pad&gt;</code>, <code>&lt;EOS&gt;</code> and
+            <code>&lt;/&gt;</code> are matched as token tags and thrown out.</p>
+          <p>U+2217 is deliberately <b>not</b> a maths glyph here: it is the author footnote marker.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Shape and number</h4>
+          <p>Set in from the margin and not running past <code>92%</code> of the body width. A trailing
+            <code>(1)</code>, <code>(3.2)</code> or <code>(A.4)</code> becomes the label.</p>
+        </div>
+      </div>
+    </div>
+    <div class="rail">
+      <b>Two equations do not merge into one.</b> Consecutive formula lines are allowed a looser vertical gap,
+      <code>line_height &times; 2.5</code> rather than <code>&times; 0.9</code>, because a multi-line equation
+      is set with wide leading and the ordinary gap test splits one equation into three. What this does
+      <b>not</b> do is recover LaTeX: getting <code>\frac{QK^T}{\sqrt{d_k}}</code> back from glyph positions is
+      a research problem, and the deep tier's formula enrichment is the right tool. The text, the box and the
+      number are enough to find it, cite it, show it and hand the region to a vision model.
+    </div>
+  </section>
+
+  <!-- ===================================================== references -->
+  <section class="panel">
+    <h2>5 &nbsp;References and the citations that point at them</h2>
+
+    <div class="lane k-ref">
+      <div class="lane-head">
+        <h3>Split the list</h3>
+        <span class="file">parse/citations.py &rarr; split_references</span>
+        <p>One element into many</p>
+      </div>
+      <div class="steps">
+        <div class="step dang">
+          <h4>The problem</h4>
+          <p>A reference list is one run of lines in one font, so the grouper reads it as a <b>single
+            element</b>: <code>[1] Ba ... 2016. [2] Bahdanau</code>. Every entry is individually unreachable.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Split on the marker</h4>
+          <p>A bracketed number, a bare number and a stop, or, in an author-year list, a new surname starting
+            a line.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Shallow metadata</h4>
+          <p>Number, year, title and authors, deliberately no more. Anything deeper is better answered by
+            resolving the entry than by parsing it.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step warnt">
+          <h4>Sections first</h4>
+          <p>Splitting applies <b>only</b> inside the references section, so it has to run after
+            <code>_attach_sections</code> and before order is reassigned.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane k-ref">
+      <div class="lane-head">
+        <h3>Link the markers</h3>
+        <span class="file">citations.py &rarr; link_markers</span>
+        <p>Two styles, both wanted</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Numeric</h4>
+          <p><code>[13]</code>, <code>[12, 13]</code>, <code>[4-7]</code> resolve by the entry's own number,
+            ranges expanded.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Author-year</h4>
+          <p><code>(Vaswani et al., 2017)</code> resolves on first surname plus year, which is the pair the
+            style guarantees unique within one bibliography.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Why both</h4>
+          <p>A library will hold papers in both styles, and a reader following a claim to its source does not
+            care which the author used.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Result</h4>
+          <p>An in-text marker becomes a link to the entry, and the entry knows which passages cite it.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane k-ref">
+      <div class="lane-head">
+        <h3>Resolve to something openable</h3>
+        <span class="file">server/refs.py</span>
+        <p>Three sources, in order of certainty</p>
+      </div>
+      <div class="steps">
+        <div class="step goodt">
+          <h4>1. What it already says</h4>
+          <p>A DOI or arXiv id printed in the entry resolves with <b>no lookup at all</b>, which covers most of
+            machine learning. Free, and done when the page loads.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>2. arXiv, by title</h4>
+          <p>Free, no key, no registration. Accepted at <code>82%</code> title overlap.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>3. Crossref, by title</h4>
+          <p>Free, no key, asks only that you identify yourself, which <code>USER_AGENT</code> does.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>View, then Add</h4>
+          <p>Lookup is a <b>button</b>, not automatic: it is one request per entry and a reference list is
+            long. Add appears only where a free PDF exists, because offering a download that leads to a
+            paywall is worse than offering none.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ ocr -->
+  <section class="panel">
+    <h2>6 &nbsp;Optional passes: OCR, and rendering a page</h2>
+
+    <div class="lane k-accent">
+      <div class="lane-head">
+        <h3>OCR, off by default</h3>
+        <span class="file">parse/ocr.py</span>
+        <p>Two jobs, one engine</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Scanned pages</h4>
+          <p>A page with an empty text layer is a photograph of a page. Without this such a paper indexes as
+            <b>nothing at all</b> and silently returns no results for every query.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>Text inside figures</h4>
+          <p>A chart's axis labels and data labels are frequently the only place a number appears in the whole
+            paper. "What was the accuracy at epoch 50" is answerable from the figure and nowhere else.</p>
+          <p>The highest value use of OCR in a paper reader, and the one most systems skip.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Engines, in order</h4>
+          <p><b>RapidOCR</b> on onnxruntime, no system binary and no torch, the only one that could run on a
+            slim deployment. Then EasyOCR, then Tesseract.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step warnt">
+          <h4>Why off</h4>
+          <p>Slow, and wrong often enough on a dense figure to be worth a user's decision. On a paper with a
+            good text layer it adds nothing.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="lane k-accent">
+      <div class="lane-head">
+        <h3>Page images</h3>
+        <span class="file">server/pages.py</span>
+        <p>On demand, never at ingest</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h4>Measured, not assumed</h4>
+          <p>On a 26 page paper: <code>38 ms</code> and <code>227 KB</code> per page at
+            <code>PAGE_RENDER_SCALE = 1.6</code>, against <code>8.3 MB</code> for the PDF itself.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step tint">
+          <h4>So: lazily</h4>
+          <p>Rendering every page eagerly is unnecessary rather than expensive. A page is rendered the first
+            time it is asked for, and the digest is written back onto the paper's page list.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step">
+          <h4>Locked per page</h4>
+          <p>Two requests for the same page do not render it twice: the second waits, then re-reads and finds
+            the work done.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step goodt">
+          <h4>What it is for</h4>
+          <p>The reader overlay. Boxes drawn in percentages of the page's own point dimensions, so a wrong
+            table or a missed heading is <b>visible</b> rather than merely recorded.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================================================== downstream -->
+  <section class="panel">
+    <h2>7 &nbsp;What each kind becomes downstream</h2>
+    <p class="lede">
+      One table holds all seventeen kinds, and the differences show up in how each is chunked and what the
+      lexical index is allowed to see. <code>Element.search_text()</code> returns label, caption, text, every
+      table cell, and a figure's OCR text and description, so a number that exists only in a table cell or
+      only on a chart axis is still findable by typing it.
+    </p>
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th>Kind</th><th>Chunked as</th><th>What the lexical index sees</th>
+          <th>Attached to a prompt as</th><th>Where you see it</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">Paragraph, list item</td>
+          <td>Merged to a <code>450</code> token budget, <code>80</code> overlap, split on sentences</td>
+          <td>Its text</td>
+          <td>Numbered excerpt</td>
+          <td>Reader, All Views, evidence cards</td>
+        </tr>
+        <tr>
+          <td class="name">Heading</td>
+          <td>Prepended to every chunk beneath it as the section path</td>
+          <td>Its text</td>
+          <td>Part of each excerpt's context line</td>
+          <td>Outline, section filter</td>
+        </tr>
+        <tr>
+          <td class="name">Table</td>
+          <td>Whole, never split, as <b>markdown</b> plus its caption</td>
+          <td>Every cell, via <code>cell_text()</code></td>
+          <td>Markdown, plus a warning when structure was inferred</td>
+          <td>Rendered from its grid, and as an image when unconfident</td>
+        </tr>
+        <tr>
+          <td class="name">Figure</td>
+          <td>Caption, OCR text and description. A figure with none of those still becomes a chunk</td>
+          <td>Caption, OCR text, description</td>
+          <td>The <b>image itself</b>, on providers that accept one</td>
+          <td>Figure gallery, reader overlay, evidence</td>
+        </tr>
+        <tr>
+          <td class="name">Formula</td>
+          <td>Atomic, with its number as a label</td>
+          <td>Its text and label</td>
+          <td>Excerpt, and the region as an image</td>
+          <td>Equations view, reader overlay</td>
+        </tr>
+        <tr>
+          <td class="name">Reference</td>
+          <td>Atomic, one chunk per entry</td>
+          <td>Authors, title, year, venue</td>
+          <td>Excerpt, when the question is about prior work</td>
+          <td>References tab, with View and Add</td>
+        </tr>
+        <tr>
+          <td class="name">Caption</td>
+          <td>Not chunked alone: it lives on the figure or table it labels</td>
+          <td>Through its target</td>
+          <td>Through its target</td>
+          <td>Under the figure, and as the label everywhere</td>
+        </tr>
+        <tr>
+          <td class="name">Page header, footer</td>
+          <td>Not chunked. Kept, not indexed as prose</td>
+          <td>Excluded from reading order</td>
+          <td>Never</td>
+          <td>Reader overlay only, so a parse can be checked</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ====================================================== quality -->
+  <section class="panel">
+    <h2>8 &nbsp;How much to trust one parse</h2>
+    <p class="lede">
+      The parser already knows how well it did. It records whether a table's columns were read from ruling or
+      inferred, whether a figure was an image object or a cropped guess, whether a page had a text layer, and
+      whether a caption was ever matched. <b>None of that was ever shown</b>, so a bad parse looked exactly
+      like a good one and a wrong number in a table looked as authoritative as a right one.
+    </p>
+    <div class="grid g4">
+      <div class="stage dang">
+        <h3>Weighted worst</h3>
+        <span class="file">parse/quality.py</span>
+        <p>
+          A table whose columns were guessed. The numbers look fine and are in the wrong columns, which is the
+          failure most likely to mislead a reader who cannot tell.
+        </p>
+      </div>
+      <div class="stage warnt">
+        <h3>Most complete</h3>
+        <p>
+          A page with no text layer. Total, but at least obvious: nothing from that page appears anywhere, and
+          the concern names OCR as the fix.
+        </p>
+      </div>
+      <div class="stage">
+        <h3>Untidy and harmless</h3>
+        <p>
+          A figure with no caption attached. Counted and reported, weighted low, because nothing about it is
+          misleading.
+        </p>
+      </div>
+      <div class="stage goodt">
+        <h3>The concerns are the point</h3>
+        <p>
+          The score is a summary. What is actually useful is the list naming what is likely wrong and what to
+          do about it, shown on the paper and in the library as a badge.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================== deep -->
+  <section class="panel">
+    <h2>9 &nbsp;The deep tier, where it is available</h2>
+    <p class="lede">
+      Docling was chosen over Marker and MinerU <b>deliberately, and not because it wins on raw accuracy</b>.
+      On olmOCR-bench as of 2026 Marker 2 leads at 76.0, MinerU is at 72.7 and Docling's non-VLM pipeline is
+      at 50.3.
+    </p>
+    <div class="grid g4">
+      <div class="stage tint">
+        <h3>Licence decides it</h3>
+        <p>MIT and Linux Foundation governance. Marker's weights carry a commercial restriction and MinerU is
+          AGPL, which settles the question for anything a user may want to deploy.</p>
+      </div>
+      <div class="stage">
+        <h3>A document, not markdown</h3>
+        <p>A structured <code>DoclingDocument</code> with pages, boxes and reading order. This whole
+          application is built on those, and reconstructing them from markdown is a downgrade.</p>
+      </div>
+      <div class="stage">
+        <h3>Runs on a CPU</h3>
+        <p>A real CPU path, where the other two assume a GPU. An optional VLM backend, granite-docling at
+          258M, closes most of the gap in 4 GB of VRAM.</p>
+      </div>
+      <div class="stage warnt">
+        <h3>What it adds</h3>
+        <p>TableFormer reads spanning cells and nested headers the fast tier cannot, finds tables with
+          <b>no ruling at all</b>, and enriches formulas. Adding a fourth parser means editing
+          <code>registry.py</code> and nothing downstream.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================= legend -->
+  <div class="legend">
+    <div class="keys">
+      <div class="key"><span class="sw" style="background:var(--surface)"></span> stage</div>
+      <div class="key"><span class="sw" style="background:var(--accent-soft);border-color:#a9d9d3"></span> the idea that makes it work</div>
+      <div class="key"><span class="sw" style="background:var(--good-soft);border-color:#bfe0c9"></span> confident result</div>
+      <div class="key"><span class="sw" style="background:var(--warn-soft);border-color:#f0d5a8"></span> a known limit, reported not hidden</div>
+      <div class="key"><span class="sw" style="background:var(--danger-soft);border-color:#f2c9c5"></span> the failure being guarded against</div>
+    </div>
+    <div style="text-align:right">
+      Regenerate with <code>npm run diagram</code>. Source: <code>docs/extraction.html</code>.<br>
+      Constants are the real values from the module named on each lane.
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
