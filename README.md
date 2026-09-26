@@ -393,8 +393,9 @@ Removing a paper returns all of it.
 Nineteen, through one adapter layer: Gemini, Anthropic, OpenAI, Groq,
 OpenRouter, Together, DeepSeek, Mistral, Cerebras, SambaNova, xAI, Fireworks,
 Perplexity, Hugging Face, Cloudflare Workers AI, and Ollama, LM Studio,
-llama.cpp and vLLM locally. Fourteen speak the OpenAI protocol, so one client
-library covers them.
+llama.cpp and vLLM locally. Seventeen speak the OpenAI protocol, thirteen
+hosted and four local, so one client library covers all but Gemini and
+Anthropic.
 
 A key can come from the server's environment or from the browser. A key pasted
 in Settings is stored in localStorage, attached as a header to that visitor's
