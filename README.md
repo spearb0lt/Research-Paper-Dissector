@@ -24,6 +24,8 @@ public to anyone who opens the link, and can be removed from the library again.
 
 - [What it does](#what-it-does)
 - [Architecture](#architecture)
+  - [The system](#the-system)
+  - [The extraction pipelines](#the-extraction-pipelines)
 - [Quick start](#quick-start)
 - [The two extraction tiers](#the-two-extraction-tiers)
 - [How the fast tier reads a table](#how-the-fast-tier-reads-a-table)
@@ -128,26 +130,17 @@ the full list.
 
 ## Architecture
 
-The whole application on one sheet: the request lifecycle, the ingest pipeline,
-the storage model, both retrieval legs and how they fuse, the optional answering
-layer, what the user touches, which capabilities each hosting target has, and
-what the eval asserts about all of it.
+Two generated sheets. The first is how the application fits together, the
+second is what happens inside the single box on it marked **Parse**, which is
+where almost every hard problem in this project lives.
+
+### The system
+
+The request lifecycle, the ingest pipeline, the storage model, both retrieval
+legs and how they fuse, the optional answering layer, what the user touches,
+which capabilities each hosting target has, and what the eval asserts.
 
 [![Dissect architecture and workflow](docs/media/architecture.png)](docs/media/architecture.png)
-
-Open the image for full resolution, or read
-**[docs/architecture.pdf](docs/architecture.pdf)** where the text stays
-selectable and searchable and prints at a readable size.
-
-Every box names a real file and every number on it was measured against this
-repository. It is generated rather than drawn, so it can be kept honest:
-
-```bash
-npx playwright install chromium   # once, it renders the page
-npm run diagram                   # docs/architecture.html -> the PNG and the PDF
-```
-
-The five panels worth reading first, if the sheet is too much at once:
 
 | Panel | Answers |
 |---|---|
@@ -156,6 +149,40 @@ The five panels worth reading first, if the sheet is too much at once:
 | **4. Retrieval** | How BM25 and dense vectors are fused, and why that is the whole of no-LLM mode |
 | **7. Capability tiers** | What works on Vercel, Render, Docker and a VM, and what reports itself unavailable |
 | **9. Not in the diagram** | A vector database, per chunk LLM summaries and page level visual retrieval, and why each was rejected |
+
+### The extraction pipelines
+
+A PDF has no paragraphs, no tables and no figures in it. It has glyphs at
+coordinates, ruling lines, and image objects. One lane per kind, showing how
+each is recovered, with the real constants and the failure each guards against.
+
+[![Extraction pipelines, one per kind](docs/media/extraction.png)](docs/media/extraction.png)
+
+| Lane | The idea |
+|---|---|
+| **Text** | Runs break on a blank line, on a table's ruling band, or when a line stops being an equation |
+| **Tables** | Two aligned ruling lines is what a table looks like and what a paragraph never does |
+| **Figures** | Two passes: embedded image objects, then rasterising the region a caption points at |
+| **Equations** | Found by the **absence of a body font** on the line, not the presence of a maths one |
+| **References** | Split one element into many, link both citation styles, then resolve against arXiv and Crossref |
+| **Downstream** | What each kind is chunked as, what the lexical index sees, and how it reaches a prompt |
+
+### Keeping them honest
+
+Every box names a file that exists and every number was measured against this
+repository, which is how the provider count in [Model providers](#model-providers)
+turned out to be wrong. They are generated from pages rather than drawn, so a
+module moving is one command away from being reflected:
+
+```bash
+npx playwright install chromium   # once, it renders the pages
+npm run diagram                   # docs/*.html -> two PNGs and two PDFs
+```
+
+Open either image for full resolution, or read
+**[architecture.pdf](docs/architecture.pdf)** and
+**[extraction.pdf](docs/extraction.pdf)**, where the text stays selectable and
+searchable and prints at a readable size.
 
 ---
 
