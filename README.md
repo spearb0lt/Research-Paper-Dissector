@@ -1,5 +1,11 @@
 # Dissect
 
+[![Live demo](https://img.shields.io/badge/live-dissect--sepia.vercel.app-0f766e)](https://dissect-sepia.vercel.app)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-0f766e)](LICENSE)
+![API key optional](https://img.shields.io/badge/API%20key-optional-8a837c)
+![Python 3.12](https://img.shields.io/badge/python-3.12-8a837c)
+![Next.js 15](https://img.shields.io/badge/Next.js-15-8a837c)
+
 Upload a research paper and interrogate every figure, table, equation and claim
 in it, with citations that point at a bounding box on a page.
 
@@ -36,6 +42,7 @@ public to anyone who opens the link, and can be removed from the library again.
 - [Model providers](#model-providers)
 - [The eval](#the-eval)
 - [Layout](#layout)
+- [Licence](#licence)
 
 ---
 
@@ -471,25 +478,32 @@ truth and retrieval against known answer pages. It fetches three papers from
 arXiv on first run and is self-contained after that.
 
 ```
-attention    2.5s   4 tables   3 figures   219 elements
+attention    2.9s   4 tables   3 figures   219 elements
              p6   columns  4 (want  4)  ok
              p8   columns  5 (want  5)  ok
              p9   columns 13 (want 13)  ok
              p10  columns  3 (want  3)  ok
              formulas  4 (want 4 to 4)
-colpali      5.5s   5 tables  20 figures   455 elements
-docling      1.2s   1 tables  12 figures   133 elements
+colpali      5.8s   5 tables  20 figures   455 elements
+docling      1.1s   1 tables  12 figures   133 elements
              p5   columns  5 (want  5)  ok
 
 retrieval (ingesting into a scratch database)
-  ok    p[8] got p[8, 8, 1]   What BLEU score did the big model achieve on English
+  ok    p[8] got p[8, 8, 1]  What BLEU score did the big model achieve on English
   ok    p[8] got p[8, 12, 7]  What is the dropout rate and label smoothing value?
-  ok    p[7] got p[7, 8, 9]   What dataset did they train on?
+  ok    p[7] got p[7, 8, 9]  What dataset did they train on?
   ok    p[6, 7] got p[6, 6, 10]  Why is self-attention faster than recurrent layers?
-  ok    p[7] got p[7, 7, 8]   What optimizer and learning rate schedule were used?
-  ok    p[3] got p[3, 4, 3]   What does Figure 1 show?
-  ok    p[8] got p[8, 9, 6]   What is in Table 2?
-  ok    p[4] got p[4, 3, 4]   Describe Figure 2
+  ok    p[7] got p[7, 7, 8]  What optimizer and learning rate schedule were used?
+  ok    p[3] got p[3, 4, 3]  What does Figure 1 show?
+  ok    p[8] got p[8, 9, 6]  What is in Table 2?
+  ok    p[4] got p[4, 3, 4]  Describe Figure 2
+
+portability
+  ok    NUL stripped from text, kept in blobs
+
+storage with no persistent disk
+  ok    blob recovered from the database with no local files
+  ok    an unreferenced blob is swept
 
 PASSED
 ```
@@ -497,8 +511,14 @@ PASSED
 Every assertion in it encodes a bug that was real and shipped at some point:
 the shredded-prose tables, the caption bounding box that swallowed the table
 below it, the duplicated vector figures, the string-versus-integer chunk ids
-that stopped the two retrieval legs from ever fusing, and the label references
-that could not find the figure they named.
+that stopped the two retrieval legs from ever fusing, the label references that
+could not find the figure they named, the NUL bytes in a PDF's text layer that
+Postgres refuses and SQLite stores, and the uploads that did not survive the
+instance that received them.
+
+Not one of those was caught by a type check or a build. Every one of them was
+invisible in normal output, which is the argument for an eval that asserts
+things about results rather than about types.
 
 ---
 
@@ -526,14 +546,46 @@ server/
 app/                Next.js App Router
 components/         shared React
 lib/                API client, types, key vault
-scripts/            fetch_model.py, capture.mjs
-docs/media/         README screenshots and the demo recording
+scripts/            fetch_model.py, capture.mjs (screenshots),
+                    diagrams.mjs and workflow.mjs (the diagrams)
+docs/               diagram sources, and media/ for everything the
+                    README embeds
 ```
 
-About 15,400 lines of Python and 7,000 of TypeScript, over 41 API routes.
+About 16,000 lines of Python and 7,000 of TypeScript, across 41 API paths.
+The frontend reaches the backend only over `/api`, and `lib/types.ts` is the
+whole of the contract between them.
 
 ---
 
 ## Licence
 
-MIT.
+MIT, in [LICENSE](LICENSE). Use it, fork it, ship it, no attribution required.
+
+Nothing third party is vendored into this repository. What the encoder and the
+optional deep tier pull in keeps its own licence:
+
+| Component | Licence | When |
+|---|---|---|
+| [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), the bundled encoder | Apache 2.0 | `python scripts/fetch_model.py`, about 23 MB |
+| [Docling](https://github.com/docling-project/docling), the deep tier's code | MIT | only if you install `requirements-server.txt` |
+| [Docling's layout and TableFormer weights](https://huggingface.co/ds4sd/docling-models) | CDLA-Permissive-2.0 and Apache 2.0 | first deep parse, about 500 MB |
+
+Those licences are part of why Docling was chosen over more accurate parsers:
+Marker's weights carry a commercial restriction and MinerU is AGPL, either of
+which would have decided this section for you rather than for me. See
+[The two extraction tiers](#the-two-extraction-tiers).
+
+Papers you upload are yours. Their contents leave this application in exactly
+three cases, all of which you choose:
+
+1. The excerpts and figure crops an answer needs go to the **model provider**
+   you configured. With none configured, retrieval still works and this cannot
+   happen.
+2. Chunk text goes to a **hosted embedding provider**, but only if you pick one
+   over the bundled local encoder, which is the default and runs offline.
+3. A reference's **title** goes to arXiv or Crossref when you ask it to resolve
+   one, which is a button rather than something that happens on load.
+
+Nothing else is sent anywhere. Provider keys are never written to disk and
+never logged, whether they come from the environment or from your browser.
