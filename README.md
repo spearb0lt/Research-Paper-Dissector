@@ -24,8 +24,7 @@ public to anyone who opens the link, and can be removed from the library again.
 
 - [What it does](#what-it-does)
 - [Architecture](#architecture)
-  - [The system](#the-system)
-  - [The extraction pipelines](#the-extraction-pipelines)
+  - [In more detail](#in-more-detail)
 - [Quick start](#quick-start)
 - [The two extraction tiers](#the-two-extraction-tiers)
 - [How the fast tier reads a table](#how-the-fast-tier-reads-a-table)
@@ -130,59 +129,53 @@ the full list.
 
 ## Architecture
 
-Two generated sheets. The first is how the application fits together, the
-second is what happens inside the single box on it marked **Parse**, which is
-where almost every hard problem in this project lives.
+A PDF goes in on the left and an answer you can check comes out on the right.
+**(a)** is what happens to a paper on the way in, **(b)** is what happens to a
+question on the way out.
 
-### The system
+[![How a paper becomes an answer you can check](docs/media/workflow.png)](docs/media/workflow.png)
 
-The request lifecycle, the ingest pipeline, the storage model, both retrieval
-legs and how they fuse, the optional answering layer, what the user touches,
-which capabilities each hosting target has, and what the eval asserts.
+Three things on it are the whole design:
 
-[![Dissect architecture and workflow](docs/media/architecture.png)](docs/media/architecture.png)
+- **The element is the unit.** A paragraph, a table, a figure, an equation and
+  a reference entry are all rows in one table, so the reader overlay, All
+  Views, retrieval and a citation all read the same rows.
+- **Two retrieval legs, no vector database.** BM25 and an exact numpy cosine,
+  fused with reciprocal rank fusion. A paper is a few thousand vectors.
+- **Evidence is a destination, not a stage.** Everything left of *Context
+  assembly* needs no API key and no model, and many questions stop there.
 
-| Panel | Answers |
+### In more detail
+
+Two reference sheets, for when the flowchart is not enough.
+
+| Sheet | What it covers |
 |---|---|
-| **2. Ingest pipeline** | What happens between dropping in a PDF and being able to search it |
-| **3. Storage** | Why one schema serves SQLite and Postgres, and where the bytes go when there is no disk |
-| **4. Retrieval** | How BM25 and dense vectors are fused, and why that is the whole of no-LLM mode |
-| **7. Capability tiers** | What works on Vercel, Render, Docker and a VM, and what reports itself unavailable |
-| **9. Not in the diagram** | A vector database, per chunk LLM summaries and page level visual retrieval, and why each was rejected |
+| [**The system**](docs/media/architecture.png) | Request lifecycle, middleware, storage model, the capability matrix per hosting target, and what the eval asserts |
+| [**The extraction pipelines**](docs/media/extraction.png) | One lane per kind, with the real constants and the failure each one guards against |
 
-### The extraction pipelines
-
-A PDF has no paragraphs, no tables and no figures in it. It has glyphs at
-coordinates, ruling lines, and image objects. One lane per kind, showing how
-each is recovered, with the real constants and the failure each guards against.
+[![The system, in nine panels](docs/media/architecture.png)](docs/media/architecture.png)
 
 [![Extraction pipelines, one per kind](docs/media/extraction.png)](docs/media/extraction.png)
-
-| Lane | The idea |
-|---|---|
-| **Text** | Runs break on a blank line, on a table's ruling band, or when a line stops being an equation |
-| **Tables** | Two aligned ruling lines is what a table looks like and what a paragraph never does |
-| **Figures** | Two passes: embedded image objects, then rasterising the region a caption points at |
-| **Equations** | Found by the **absence of a body font** on the line, not the presence of a maths one |
-| **References** | Split one element into many, link both citation styles, then resolve against arXiv and Crossref |
-| **Downstream** | What each kind is chunked as, what the lexical index sees, and how it reaches a prompt |
 
 ### Keeping them honest
 
 Every box names a file that exists and every number was measured against this
 repository, which is how the provider count in [Model providers](#model-providers)
-turned out to be wrong. They are generated from pages rather than drawn, so a
+turned out to be wrong. The flowchart is generated from a graph of nodes and
+edges in `scripts/workflow.mjs`, and the two sheets from pages in `docs/`, so a
 module moving is one command away from being reflected:
 
 ```bash
 npx playwright install chromium   # once, it renders the pages
-npm run diagram                   # docs/*.html -> two PNGs and two PDFs
+npm run diagram                   # three PNGs, three PDFs and docs/workflow.svg
 ```
 
-Open either image for full resolution, or read
-**[architecture.pdf](docs/architecture.pdf)** and
-**[extraction.pdf](docs/extraction.pdf)**, where the text stays selectable and
-searchable and prints at a readable size.
+Open any image for full resolution. The PDFs keep the text selectable and
+searchable: **[workflow](docs/workflow.pdf)**,
+**[architecture](docs/architecture.pdf)**,
+**[extraction](docs/extraction.pdf)**. `docs/workflow.svg` is the vector form,
+if you want to drop a box of it into something else.
 
 ---
 
