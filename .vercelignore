@@ -24,8 +24,10 @@ node_modules/
 # on a public instance that builds its own library from scratch.
 data/
 
-# README media is served by GitHub and never requested from the deployment.
-docs/media/
+# Documentation and README media. All of it is served by GitHub and none of it
+# is ever requested from the deployment, including the architecture diagram's
+# source page and its PDF.
+docs/
 
 # Everything the deep tier needs. None of it fits in a serverless bundle, and
 # runtime.py already reports those capabilities unavailable here with a reason.

@@ -23,6 +23,7 @@ public to anyone who opens the link, and can be removed from the library again.
 ## Contents
 
 - [What it does](#what-it-does)
+- [Architecture](#architecture)
 - [Quick start](#quick-start)
 - [The two extraction tiers](#the-two-extraction-tiers)
 - [How the fast tier reads a table](#how-the-fast-tier-reads-a-table)
@@ -122,6 +123,39 @@ drawer within a month. Exported as a reading list.
 **Keyboard driven.** `j` and `k` through elements, `/` to search, `h` and `l`
 to turn pages, `o` for the overlay, `v` to cycle the reader's views, `?` for
 the full list.
+
+---
+
+## Architecture
+
+The whole application on one sheet: the request lifecycle, the ingest pipeline,
+the storage model, both retrieval legs and how they fuse, the optional answering
+layer, what the user touches, which capabilities each hosting target has, and
+what the eval asserts about all of it.
+
+[![Dissect architecture and workflow](docs/media/architecture.png)](docs/media/architecture.png)
+
+Open the image for full resolution, or read
+**[docs/architecture.pdf](docs/architecture.pdf)** where the text stays
+selectable and searchable and prints at a readable size.
+
+Every box names a real file and every number on it was measured against this
+repository. It is generated rather than drawn, so it can be kept honest:
+
+```bash
+npx playwright install chromium   # once, it renders the page
+npm run diagram                   # docs/architecture.html -> the PNG and the PDF
+```
+
+The five panels worth reading first, if the sheet is too much at once:
+
+| Panel | Answers |
+|---|---|
+| **2. Ingest pipeline** | What happens between dropping in a PDF and being able to search it |
+| **3. Storage** | Why one schema serves SQLite and Postgres, and where the bytes go when there is no disk |
+| **4. Retrieval** | How BM25 and dense vectors are fused, and why that is the whole of no-LLM mode |
+| **7. Capability tiers** | What works on Vercel, Render, Docker and a VM, and what reports itself unavailable |
+| **9. Not in the diagram** | A vector database, per chunk LLM summaries and page level visual retrieval, and why each was rejected |
 
 ---
 
@@ -343,8 +377,10 @@ found it and at what rank.
 
 ![The library](docs/media/library.png)
 
-Regenerate every image in this README with `npm run capture`, which needs both
-halves running and at least one paper in the library.
+Regenerate every screenshot in this README with `npm run capture`, which needs
+both halves running and at least one paper in the library. Both that and
+`npm run diagram` drive a real browser, so fetch it once with
+`npx playwright install chromium`.
 
 ---
 

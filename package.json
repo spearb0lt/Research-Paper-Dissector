@@ -10,7 +10,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "api": "uvicorn server.main:app --port 8099 --reload",
-    "capture": "node scripts/capture.mjs"
+    "capture": "node scripts/capture.mjs",
+    "diagram": "node scripts/architecture.mjs"
   },
   "dependencies": {
     "next": "15.5.25",

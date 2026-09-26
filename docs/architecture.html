@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dissect architecture</title>
+<!--
+  The source of the architecture diagram in the README.
+
+  Kept as a page rather than drawn by hand in a diagram tool, for the same
+  reason the screenshots are captured by a script: a picture of an architecture
+  goes stale the moment a module moves, and the only defence is being able to
+  regenerate it in one command.
+
+      npm run diagram
+
+  Every box names a real file and every number is measured. If a claim here
+  cannot be checked against the repository, it does not belong on the diagram.
+-->
+<style>
+  :root {
+    --canvas: #fbfaf9;
+    --surface: #ffffff;
+    --raised: #f4f2f0;
+    --line: #e3dfdb;
+    --line-strong: #cbc5bf;
+    --ink: #1c1a18;
+    --ink-muted: #55504b;
+    --ink-faint: #8a837c;
+    --accent: #0f766e;
+    --accent-soft: #d6f0ec;
+    --accent-ink: #0b544e;
+    --warn: #b45309;
+    --warn-soft: #fdf0dd;
+    --danger: #b42318;
+    --danger-soft: #fdeceb;
+    --good: #15803d;
+    --good-soft: #e5f4e9;
+    --table: #7c3aed;
+    --figure: #c2410c;
+    --formula: #0369a1;
+    --reference: #4d7c0f;
+    --mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    width: 1680px;
+    background: var(--canvas);
+    color: var(--ink);
+    font: 400 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet { padding: 40px 44px 52px; }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
+    padding-bottom: 18px;
+    border-bottom: 3px solid var(--ink);
+  }
+  .masthead h1 { margin: 0; font-size: 31px; letter-spacing: -0.02em; font-weight: 650; }
+  .masthead p { margin: 7px 0 0; font-size: 14px; color: var(--ink-muted); max-width: 940px; }
+  .facts { display: flex; gap: 26px; text-align: right; flex-shrink: 0; }
+  .fact b { display: block; font-size: 21px; font-weight: 650; line-height: 1.1; }
+  .fact span { font-size: 10.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.07em; }
+
+  /* ------------------------------------------------------------ panels */
+
+  .panel { margin-top: 30px; }
+  .panel > h2 {
+    margin: 0 0 4px;
+    font-size: 11.5px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    font-weight: 700;
+  }
+  .panel > .lede {
+    margin: 0 0 13px;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    max-width: 1500px;
+  }
+  .panel > .lede b { color: var(--ink); font-weight: 600; }
+
+  /* -------------------------------------------------------------- flow */
+
+  .flow { display: flex; align-items: stretch; gap: 0; }
+  .arrow {
+    flex: 0 0 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--line-strong);
+    font-size: 17px;
+    font-weight: 700;
+  }
+  .arrow.tall { align-items: flex-start; padding-top: 34px; }
+
+  .stage {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 11px 13px 12px;
+    min-width: 0;
+  }
+  .stage.tint  { background: var(--accent-soft); border-color: #a9d9d3; }
+  .stage.warnt { background: var(--warn-soft);   border-color: #f0d5a8; }
+  .stage.goodt { background: var(--good-soft);   border-color: #bfe0c9; }
+  .stage.dang  { background: var(--danger-soft); border-color: #f2c9c5; }
+
+  .stage h3 {
+    margin: 0 0 2px;
+    font-size: 13px;
+    font-weight: 650;
+    letter-spacing: -0.005em;
+  }
+  .stage .file {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--accent-ink);
+    display: block;
+    margin-bottom: 7px;
+    /* Break only when a name genuinely cannot fit, so a path moves to the
+       next line whole instead of splitting as "streaming." and "py". */
+    overflow-wrap: break-word;
+  }
+  .stage ul { margin: 0; padding-left: 15px; }
+  .stage li { font-size: 11.5px; color: var(--ink-muted); margin-bottom: 2.5px; }
+  .stage li b { color: var(--ink); font-weight: 600; }
+  .stage p { margin: 0; font-size: 11.5px; color: var(--ink-muted); }
+
+  .note {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--line-strong);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    font-style: italic;
+  }
+
+  /* ------------------------------------------------------------- grids */
+
+  .grid { display: grid; gap: 11px; }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .g5 { grid-template-columns: repeat(5, 1fr); }
+  .g6 { grid-template-columns: repeat(6, 1fr); }
+
+  /* -------------------------------------------------------------- chip */
+
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--raised);
+    color: var(--ink-muted);
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .chip.k-table     { background: #f3ebff; color: var(--table);     border-color: #ddc9ff; }
+  .chip.k-figure    { background: #ffeee4; color: var(--figure);    border-color: #ffd2b8; }
+  .chip.k-formula   { background: #e2f1fb; color: var(--formula);   border-color: #bcddf3; }
+  .chip.k-reference { background: #eef5dd; color: var(--reference); border-color: #d3e3ae; }
+  .chip.on  { background: var(--good-soft);   color: var(--good);   border-color: #bfe0c9; }
+  .chip.off { background: var(--raised);      color: var(--ink-faint); }
+
+  /* ------------------------------------------------------------- table */
+
+  table.matrix { width: 100%; border-collapse: collapse; background: var(--surface); }
+  table.matrix th, table.matrix td {
+    border: 1px solid var(--line);
+    padding: 6px 9px;
+    font-size: 11.5px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.matrix thead th {
+    background: var(--raised);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    font-weight: 700;
+  }
+  table.matrix td.name { font-weight: 600; white-space: nowrap; }
+  table.matrix td.yes { color: var(--good); font-weight: 650; }
+  table.matrix td.no  { color: var(--ink-faint); }
+
+  /* ------------------------------------------------------------ legend */
+
+  .legend {
+    margin-top: 30px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    gap: 30px;
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+  .legend .keys { display: flex; gap: 16px; flex-wrap: wrap; }
+  .legend .key { display: flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 22px; height: 12px; border-radius: 3px; border: 1px solid var(--line-strong); }
+
+  .rail {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 7px;
+    padding: 10px 13px;
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    margin-top: 11px;
+  }
+  .rail b { color: var(--ink); }
+  .rail.warn { border-left-color: var(--warn); }
+  .rail.dang { border-left-color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <!-- ============================================================ head -->
+  <div class="masthead">
+    <div>
+      <h1>Dissect: architecture and workflow</h1>
+      <p>
+        A research paper is parsed into <b>elements</b>, and the element is the unit of everything after that.
+        A paragraph, a table, a figure, a display equation and a reference entry are all rows in one table,
+        which is what lets the reader overlay, All Views, retrieval and a citation all read the same rows,
+        and what lets a citation point at a bounding box on a page rather than at text that has lost its origin.
+      </p>
+    </div>
+    <div class="facts">
+      <div class="fact"><b>15,899</b><span>lines of Python</span></div>
+      <div class="fact"><b>41</b><span>API routes</span></div>
+      <div class="fact"><b>17</b><span>element kinds</span></div>
+      <div class="fact"><b>19</b><span>model providers</span></div>
+      <div class="fact"><b>11</b><span>embedding backends</span></div>
+    </div>
+  </div>
+
+  <!-- ==================================================== 1. lifecycle -->
+  <section class="panel">
+    <h2>1 &nbsp;Request lifecycle</h2>
+    <p class="lede">
+      Every request crosses the same four boundaries. In development the browser talks to the backend
+      <b>directly</b>, because Next's dev rewrite buffers server sent events: the first token of an answer
+      arrived at 0.0s direct and 19.0s through the proxy, which reads as a broken feature rather than a proxy.
+      In production Vercel serves <code>/api</code> same origin, so the base is empty.
+    </p>
+    <div class="flow">
+      <div class="stage">
+        <h3>Browser, or the CLI</h3>
+        <span class="file">app/ &nbsp;&middot;&nbsp; server/ops/cli.py</span>
+        <ul>
+          <li>Next.js 15 App Router, port <b>3099</b></li>
+          <li>Provider key pasted in Settings lives in <b>localStorage</b> only</li>
+          <li>Everything the UI does is also a CLI command</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>API client</h3>
+        <span class="file">lib/api.ts &nbsp;&middot;&nbsp; lib/keys.ts</span>
+        <ul>
+          <li><code>NEXT_PUBLIC_API_BASE</code>: backend origin in dev, empty in prod</li>
+          <li>Attaches <code>X-LLM-Key-&lt;provider&gt;</code> per request</li>
+          <li>Reads SSE for upload, answers and batch lens</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage tint">
+        <h3>Middleware chain</h3>
+        <span class="file">server/main.py</span>
+        <ul>
+          <li><b>CORS</b> &rarr; <b>bind_request_credentials</b> &rarr; <b>require_password</b></li>
+          <li>Keys bound to a <b>contextvar</b> for one request, then forgotten</li>
+          <li>Never written to disk, never logged</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>Routers, 41 routes</h3>
+        <span class="file">server/api/routes.py &nbsp;&middot;&nbsp; extras.py</span>
+        <ul>
+          <li>Both mounted under <code>/api</code></li>
+          <li>SSE: <code>/papers/stream</code>, <code>/ask/stream</code>, <code>/lenses/batch</code></li>
+          <li>Typed handlers per error class, never a bare 500</li>
+        </ul>
+      </div>
+    </div>
+    <div class="rail">
+      <b>Errors are answers.</b> <code>ParseError</code>, <code>LLMError</code>, <code>EmbeddingError</code> and
+      <code>CapabilityError</code> each have a handler that returns a message and a hint the UI renders.
+      A feature the platform cannot provide reports itself unavailable with a reason, rather than failing at
+      call time with an ImportError.
+    </div>
+  </section>
+
+  <!-- ======================================================= 2. ingest -->
+  <section class="panel">
+    <h2>2 &nbsp;Ingest pipeline, the write path</h2>
+    <p class="lede">
+      <code>server/pipeline.py</code> drives six stages and emits progress at each one, so a long parse reads as
+      working rather than hung. Any exception records <b>why</b> on the paper's status: a row left at
+      <code>parsing</code> never resolves and holds its storage for ever.
+    </p>
+    <div class="flow">
+      <div class="stage">
+        <h3>1. Acquire</h3>
+        <span class="file">api/routes.py &middot; server/fetch.py</span>
+        <ul>
+          <li>Upload, or arXiv id, DOI or URL</li>
+          <li><b>SSRF guard</b>: host resolved and re-checked on every redirect</li>
+          <li>PDF magic bytes verified</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>2. Store</h3>
+        <span class="file">server/blobs.py</span>
+        <ul>
+          <li>SHA-256 content addressed</li>
+          <li><b>Dedupe by file_hash</b>: the same PDF twice is parsed once</li>
+          <li>Disk, or the database where there is none</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage tint">
+        <h3>3. Parse</h3>
+        <span class="file">server/parse/registry.py</span>
+        <ul>
+          <li><code>auto</code> picks <b>deep</b> if its models are present, else <b>fast</b></li>
+          <li>Falls back to fast if deep raises</li>
+          <li>Optional OCR for scanned pages</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>4. Commit</h3>
+        <span class="file">db/repo.py &middot; parse/quality.py</span>
+        <ul>
+          <li>Elements replaced <b>atomically</b>, so a re-parse never interleaves</li>
+          <li>Quality graded: good, fair, poor</li>
+          <li>Counts and page geometry stored</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>5. Index</h3>
+        <span class="file">server/index/</span>
+        <ul>
+          <li>Chunk, then BM25, then dense</li>
+          <li>Both written as BLOBs on the paper</li>
+          <li>Dense is optional and off by default</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage goodt">
+        <h3>6. Ready</h3>
+        <span class="file">status = ready</span>
+        <ul>
+          <li>Browsable as soon as it is <b>parsed</b></li>
+          <li>The UI shows elements while the index is still building</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:11px">
+      <div class="stage">
+        <h3>Fast tier, about 25 MB</h3>
+        <span class="file">parse/fast.py &middot; tables.py &middot; formulas.py &middot; sections.py &middot; citations.py</span>
+        <ul>
+          <li>PyMuPDF for structure, text, figures and page rendering</li>
+          <li>pdfplumber for ruled tables</li>
+          <li><b>Tables</b>: horizontal rule bands, then x-projection whitespace corridors. Constants were swept
+            against five hand checked tables; a text based strategy once found seventeen tables in a paper
+            that has four</li>
+          <li><b>Equations</b>: detected by the <b>absence of a body font</b> on the line, not the presence of a
+            math one</li>
+          <li>Captions linked both ways, conventional side first</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <h3>Deep tier, about 2.5 GB</h3>
+        <span class="file">parse/deep.py &middot; parse/ocr.py</span>
+        <ul>
+          <li>Docling layout model and TableFormer</li>
+          <li>Figure extraction from the document model</li>
+          <li>RapidOCR on onnxruntime, no system binary</li>
+          <li>Needs roughly 2 GB of RAM, so it is <b>unavailable on serverless</b> and says so</li>
+        </ul>
+        <div class="note">Not a paid upgrade on Vercel. The models do not fit in a function bundle at all.</div>
+      </div>
+      <div class="stage">
+        <h3>17 element kinds, one table</h3>
+        <span class="file">parse/base.py &rarr; elements</span>
+        <div class="chips">
+          <span class="chip">title</span><span class="chip">authors</span><span class="chip">abstract</span>
+          <span class="chip">heading</span><span class="chip">paragraph</span><span class="chip">list_item</span>
+          <span class="chip k-table">table</span><span class="chip k-figure">figure</span>
+          <span class="chip">caption</span><span class="chip k-formula">formula</span>
+          <span class="chip">code</span><span class="chip">footnote</span>
+          <span class="chip k-reference">reference</span><span class="chip">form_field</span>
+          <span class="chip">page_header</span><span class="chip">page_footer</span><span class="chip">other</span>
+        </div>
+        <div class="note">
+          Each row carries kind, text, page, bbox, reading order, section path, label, caption link,
+          table grid and image digest. A table renders from its grid, never from model written HTML.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================== 3. storage -->
+  <section class="panel">
+    <h2>3 &nbsp;Storage</h2>
+    <p class="lede">
+      One schema, two dialects. Queries are written once with <code>?</code> placeholders and rewritten for
+      Postgres, so a literal <code>%</code> never appears in query text. Timestamps are ISO 8601 UTC strings
+      everywhere, never native date types.
+    </p>
+    <div class="grid g4">
+      <div class="stage">
+        <h3>Engine</h3>
+        <span class="file">server/db/engine.py</span>
+        <ul>
+          <li>SQLite by default, Postgres when <code>DATABASE_URL</code> is set</li>
+          <li>Type tokens: <code>{PK} {JSON} {BLOB} {BOOL} {TS}</code></li>
+          <li><b>NUL stripped from every string</b>: Postgres refuses it, SQLite stores it, and one PDF carried
+            174,576 of them</li>
+          <li>Bytes are never touched: 0x00 is ordinary BLOB content</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <h3>Schema, 10 tables</h3>
+        <span class="file">server/db/schema.py</span>
+        <div class="chips">
+          <span class="chip">collections</span><span class="chip">papers</span><span class="chip">elements</span>
+          <span class="chip">chunks</span><span class="chip">threads</span><span class="chip">messages</span>
+          <span class="chip">analyses</span><span class="chip">notes</span><span class="chip">usage_log</span>
+          <span class="chip">blobs</span>
+        </div>
+        <div class="note">
+          Migrations ALTER on every boot, each inside a savepoint. In Postgres one failed statement aborts the
+          whole transaction, so a swallowed error once discarded all ten CREATE TABLEs.
+        </div>
+      </div>
+      <div class="stage">
+        <h3>Indexes live on the paper</h3>
+        <span class="file">papers.lexical_index / dense_index</span>
+        <ul>
+          <li>Stored whole as BLOBs, because they are <b>read whole</b> on every search</li>
+          <li><code>dense_signature</code> records which backend built the matrix</li>
+          <li>A search against a matrix from another backend is meaningless, so it rebuilds instead</li>
+        </ul>
+      </div>
+      <div class="stage warnt">
+        <h3>Blobs, and where they go</h3>
+        <span class="file">server/blobs.py</span>
+        <ul>
+          <li>Persistent disk present: <b>filesystem</b></li>
+          <li>None present: <b>the database</b>, filesystem becomes a read cache</li>
+          <li>Content addressed, so shared: a blob is garbage only when nothing points at it</li>
+          <li>Deleting a paper sweeps orphans and reports the bytes freed</li>
+        </ul>
+        <div class="note">Attention costs 2.8 MB. ColPali costs 31 MB, for twenty figures and 26 pages.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================================================== 4. retrieval -->
+  <section class="panel">
+    <h2>4 &nbsp;Retrieval, the read path. This is the whole of no-LLM mode</h2>
+    <p class="lede">
+      Retrieval needs no API key and no model. It returns ranked chunks with pages, scores and a per leg
+      breakdown, which answers <b>where in this paper is X</b> exactly. It is the default when nothing is
+      configured, and the toggle stays visible when something is.
+    </p>
+    <div class="flow">
+      <div class="stage">
+        <h3>Chunk</h3>
+        <span class="file">index/chunk.py</span>
+        <ul>
+          <li><b>450 tokens</b>, 80 overlap</li>
+          <li>Section path prepended to every chunk</li>
+          <li>Tables and figures chunk atomically</li>
+        </ul>
+        <div class="note">
+          Deterministic context, not an LLM written sentence per chunk: that was measured as mostly recovering
+          the position the parser already knows.
+        </div>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>Leg A: lexical</h3>
+        <span class="file">index/lexical.py</span>
+        <ul>
+          <li>Hand written <b>BM25</b></li>
+          <li>Science aware tokeniser keeps <code>41.0</code>, <code>BLEU-4</code>, <code>p&lt;0.05</code> whole</li>
+          <li>A word tokeniser shreds exactly the discriminating terms</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>Leg B: dense</h3>
+        <span class="file">index/dense.py &middot; embeddings/</span>
+        <ul>
+          <li>numpy cosine, <b>brute force and exact</b></li>
+          <li>A paper is a few thousand vectors: no vector database</li>
+          <li>Doc ids carry an int/str tag through serialisation</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage tint">
+        <h3>Fuse</h3>
+        <span class="file">index/fuse.py</span>
+        <ul>
+          <li><b>Reciprocal rank fusion</b>, k = 60</li>
+          <li>Weights shift with the shape of the query</li>
+          <li>Diversified, then label pinned</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>Rank</h3>
+        <span class="file">index/rerank.py</span>
+        <ul>
+          <li>Optional cross encoder</li>
+          <li>Needs PyTorch, so off on serverless</li>
+          <li>Filters by kind, section and paper</li>
+        </ul>
+      </div>
+    </div>
+    <div class="grid g3" style="margin-top:11px">
+      <div class="stage dang">
+        <h3>The bug the eval exists to catch</h3>
+        <p>
+          The dense index once serialised chunk ids as strings while BM25 kept integers, so fusion saw
+          <code>"37"</code> and <code>37</code> as different documents and <b>never merged a single result</b>.
+          Hybrid search silently ran as two independent single leg searches, which halves quality and is
+          invisible in the output. The eval asserts at least one result is found by more than one leg.
+        </p>
+      </div>
+      <div class="stage">
+        <h3>Label pinning</h3>
+        <span class="file">ask/retrieve.py</span>
+        <p>
+          "What does Figure 3 show" is a lookup, not a ranking problem. A named label is resolved exactly and
+          pinned into the results with a score that survives the later re-sort, which is what makes questions
+          about a specific figure or table work at all.
+        </p>
+      </div>
+      <div class="stage">
+        <h3>Find everywhere</h3>
+        <span class="file">ask/retrieve.py &middot; /api/find</span>
+        <p>
+          Exhaustive rather than ranked: one term, and every place it appears, whether that is a chunk, a table
+          cell, a caption, a figure's OCR text or a reference entry. This is the All Views search.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================= 5. answer -->
+  <section class="panel">
+    <h2>5 &nbsp;Answering, the optional layer</h2>
+    <p class="lede">
+      A model is never required, and is never trusted with structure. Everything below sits on top of retrieval
+      that already works without it.
+    </p>
+    <div class="flow">
+      <div class="stage">
+        <h3>Context</h3>
+        <span class="file">ask/answer.py</span>
+        <ul>
+          <li>Numbered excerpts built from hits</li>
+          <li>Each carries paper, page and element</li>
+          <li>Comparison mode interleaves papers</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>Vision</h3>
+        <span class="file">answer.py &rarr; vision_payload</span>
+        <ul>
+          <li>Figure crops attached as images</li>
+          <li>The prompt states an attached image <b>is</b> an excerpt</li>
+          <li>Gemini, Anthropic and OpenAI protocols</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage tint">
+        <h3>Provider</h3>
+        <span class="file">llm/registry.py &middot; providers.py &middot; streaming.py</span>
+        <ul>
+          <li><b>19 providers</b>, 17 speak the OpenAI protocol</li>
+          <li>Key from the server env or the browser</li>
+          <li>Streamed as deltas over SSE</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage goodt">
+        <h3>Validate</h3>
+        <span class="file">answer.py &rarr; validate_citations</span>
+        <ul>
+          <li>Every <code>[n]</code> must resolve to an excerpt</li>
+          <li>Brackets normalised first: one provider emits <code>&#12304;1&#12305;</code></li>
+          <li>Unresolvable citations are stripped, not shown</li>
+        </ul>
+      </div>
+      <div class="arrow tall">&rarr;</div>
+      <div class="stage">
+        <h3>Render</h3>
+        <span class="file">components/AnswerBody.tsx</span>
+        <ul>
+          <li>Citation jumps to the evidence card</li>
+          <li>Evidence links to the page and its bbox</li>
+          <li>Nothing model written reaches <code>dangerouslySetInnerHTML</code></li>
+        </ul>
+      </div>
+    </div>
+    <div class="grid g3" style="margin-top:11px">
+      <div class="stage">
+        <h3>Lenses</h3>
+        <span class="file">ask/lenses.py &middot; analyses table</span>
+        <p>
+          Named analyses over one paper, and comparison lenses over several. Results are cached per paper and
+          lens, so a batch run over a library pays only for what is new: measured at 4 papers in 64 s, and 0 s
+          on a re-run.
+        </p>
+      </div>
+      <div class="stage">
+        <h3>Keys, per request</h3>
+        <span class="file">llm/keyring.py</span>
+        <p>
+          A key pasted in the browser is stored in localStorage, attached as a header on that visitor's own
+          requests, bound to a contextvar for the life of one request, and forgotten. That is what lets a
+          public deployment cost its operator nothing.
+        </p>
+      </div>
+      <div class="stage">
+        <h3>Metering</h3>
+        <span class="file">ops/meter.py &middot; usage_log</span>
+        <p>
+          Tokens and estimated cost recorded per call, per provider and per paper, so the usage screen reports
+          what was actually spent rather than an estimate made in advance.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================== 6. surface -->
+  <section class="panel">
+    <h2>6 &nbsp;What the user actually touches</h2>
+    <div class="grid g6">
+      <div class="stage">
+        <h3>Library</h3>
+        <span class="file">app/page.tsx</span>
+        <p>Collections, triage state, verdicts, parse quality, and Remove, which frees the storage too.</p>
+      </div>
+      <div class="stage">
+        <h3>Overview</h3>
+        <span class="file">app/paper/[id]/page.tsx</span>
+        <p>Outline, counts, metadata, quality report and exports to Markdown or BibTeX.</p>
+      </div>
+      <div class="stage">
+        <h3>All views</h3>
+        <span class="file">elements/ElementsView.tsx</span>
+        <p>Every element by type, plus the exhaustive find across chunks, tables, captions and references.</p>
+      </div>
+      <div class="stage">
+        <h3>Reader</h3>
+        <span class="file">reader/ReaderView.tsx</span>
+        <p>Page render with the extraction drawn over it, the real PDF inline, or the element list.</p>
+      </div>
+      <div class="stage">
+        <h3>Ask and analyse</h3>
+        <span class="file">components/AskPanel.tsx</span>
+        <p>Evidence only or a cited answer, single paper or across the library, with lenses and batch runs.</p>
+      </div>
+      <div class="stage">
+        <h3>Notes, refs</h3>
+        <span class="file">Notes.tsx &middot; ReferencesView.tsx</span>
+        <p>Notes anchored to an element. References resolved against arXiv and Crossref, with View then Add.</p>
+      </div>
+    </div>
+    <div class="rail">
+      <b>The reader overlay is the honesty feature.</b> Boxes are positioned in percentages of the page's own
+      point dimensions, so they stay aligned at any width. A table whose columns are wrong, a figure cropped
+      badly or a heading that was missed all become obvious the moment the boxes are drawn, which is what makes
+      a citation verifiable rather than merely plausible.
+    </div>
+  </section>
+
+  <!-- ====================================================== 7. runtime -->
+  <section class="panel">
+    <h2>7 &nbsp;Capability tiers, and where this runs</h2>
+    <p class="lede">
+      <code>server/runtime.py</code> fingerprints the platform and decides what is possible. Adding a hosting
+      target means teaching <code>detect()</code> about it, <b>not editing the parser</b>. Twelve capabilities
+      are reported, each with a user facing reason when it is off.
+    </p>
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th>Target</th><th>Tier</th><th>Fast parse</th><th>Deep parse, OCR, rerank</th>
+          <th>Local vectors</th><th>Where blobs live</th><th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">Oracle Always Free VM</td><td>server</td>
+          <td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td>
+          <td>disk</td>
+          <td>4 ARM cores, 24 GB. Everything works, for nothing.</td>
+        </tr>
+        <tr>
+          <td class="name">Docker / Compose</td><td>server</td>
+          <td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td>
+          <td>disk</td>
+          <td>Published on host port 8099.</td>
+        </tr>
+        <tr>
+          <td class="name">Render, standard</td><td>server</td>
+          <td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td>
+          <td>disk</td>
+          <td>2 GB. Blueprint in <code>render.yaml</code>.</td>
+        </tr>
+        <tr>
+          <td class="name">Render, free</td><td>server</td>
+          <td class="yes">yes</td><td class="no">no, 512 MB</td><td class="yes">yes</td>
+          <td>database</td>
+          <td>A free instance cannot mount a disk. Spins down after 15 minutes idle.</td>
+        </tr>
+        <tr>
+          <td class="name">Vercel</td><td>serverless</td>
+          <td class="yes">yes</td><td class="no">no, bundle limit</td><td class="yes">yes</td>
+          <td>database</td>
+          <td>Needs <code>DATABASE_URL</code>. Each instance has its own empty <code>/tmp</code>.</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="rail dang">
+      <b>The failure that made the blobs table necessary.</b> On Vercel with no database, of twelve concurrent
+      requests, eight saw an uploaded paper and four saw an empty library, and minutes later none of them did.
+      Parsing, retrieval and the whole element model worked perfectly on bytes that no longer existed.
+    </div>
+  </section>
+
+  <!-- ========================================================= 8. eval -->
+  <section class="panel">
+    <h2>8 &nbsp;What keeps it honest</h2>
+    <p class="lede">
+      Type checks and builds caught none of the real bugs in this project. The eval encodes every one of them
+      as an assertion, because each was invisible in normal output.
+    </p>
+    <div class="grid g5">
+      <div class="stage">
+        <h3>Parsing</h3>
+        <span class="file">ops/eval.py</span>
+        <p>Column counts against five hand checked tables, including a 13 column ablation grid. Formula counts, titles, abstracts.</p>
+      </div>
+      <div class="stage">
+        <h3>Retrieval</h3>
+        <span class="file">ops/eval.py</span>
+        <p>Eight questions with the page the answer is really on. Asserts a result found by more than one leg.</p>
+      </div>
+      <div class="stage">
+        <h3>Portability</h3>
+        <span class="file">ops/eval.py</span>
+        <p>NUL stripped from text, and kept in bytes. The second is the more expensive mistake.</p>
+      </div>
+      <div class="stage">
+        <h3>Storage</h3>
+        <span class="file">ops/eval.py</span>
+        <p>A blob survives the local filesystem being deleted, and an unreferenced one is swept.</p>
+      </div>
+      <div class="stage">
+        <h3>Operations</h3>
+        <span class="file">ops/cli.py</span>
+        <p><code>doctor</code>, <code>eval</code>, <code>add</code>, <code>search</code>, <code>ask</code>, <code>reindex</code>, <code>delete</code>, <code>gc</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================= 9. rejected -->
+  <section class="panel">
+    <h2>9 &nbsp;Deliberately not in this diagram</h2>
+    <div class="grid g3">
+      <div class="stage">
+        <h3>A vector database</h3>
+        <p>
+          A paper is a few thousand vectors. A numpy matmul is exact, sub-millisecond and has no service to run.
+          Chroma was removed: its HNSW backend serialises segment files per client, so two collections sharing a
+          directory leave one with no segment files on disk.
+        </p>
+      </div>
+      <div class="stage">
+        <h3>An LLM summary per chunk</h3>
+        <p>
+          Measured as mostly recovering the chunk's position in the document, which the parser already knows
+          exactly and prepends for free. The section path does the same job deterministically and costs nothing.
+        </p>
+      </div>
+      <div class="stage">
+        <h3>Page level visual retrieval</h3>
+        <p>
+          ColPali and similar: roughly a thousand vectors per page, about 8 GB of VRAM, and a retrieval unit of
+          a whole page, which is coarser than the element level extraction this already has.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================= legend -->
+  <div class="legend">
+    <div class="keys">
+      <div class="key"><span class="sw" style="background:var(--surface)"></span> module or stage</div>
+      <div class="key"><span class="sw" style="background:var(--accent-soft);border-color:#a9d9d3"></span> decides behaviour</div>
+      <div class="key"><span class="sw" style="background:var(--good-soft);border-color:#bfe0c9"></span> verified or complete</div>
+      <div class="key"><span class="sw" style="background:var(--warn-soft);border-color:#f0d5a8"></span> depends on the platform</div>
+      <div class="key"><span class="sw" style="background:var(--danger-soft);border-color:#f2c9c5"></span> a bug that shipped once</div>
+    </div>
+    <div style="text-align:right">
+      Regenerate with <code>npm run diagram</code>. Source: <code>docs/architecture.html</code>.<br>
+      Every number was measured against this repository, not estimated.
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
