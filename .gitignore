@@ -28,4 +28,8 @@ Semantic Models/
 docs/media/demo.webm
 docs/media/_video/
 
+# Built by scripts/diagrams.mjs on the way to the PNG. The source is
+# scripts/workflow.mjs and the deliverable is docs/workflow.svg.
+docs/workflow.html
+
 .DS_Store
